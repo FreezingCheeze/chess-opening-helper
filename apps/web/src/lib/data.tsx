@@ -39,8 +39,12 @@ type DataApi = {
   deleteOpening: (id: string) => Promise<void>
   listLines: (openingId: string) => Promise<LineRecord[]>
   saveDrafts: (openingId: string, drafts: DraftLine[]) => Promise<void>
-  updateLine: (id: string, patch: Partial<Pick<LineRecord, 'name' | 'groupName' | 'included' | 'pgn'>>) => Promise<void>
+  updateLine: (
+    id: string,
+    patch: Partial<Pick<LineRecord, 'name' | 'groupName' | 'included' | 'pgn' | 'sortOrder'>>,
+  ) => Promise<void>
   setLineLearning: (openingId: string, lineId: string, included: boolean, myColor: 'white' | 'black') => Promise<void>
+  setMainLine: (openingId: string, lineId: string) => Promise<void>
   deleteLine: (id: string) => Promise<void>
   listProgress: (openingId: string) => Promise<ProgressRecord[]>
   applyEvents: (openingId: string, events: SessionEvent[]) => Promise<void>
@@ -385,6 +389,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const original = lines.find((line) => line.id === draft.id)
           if (original && original.included !== draft.included) await this.updateLine(draft.id, { included: draft.included })
         }
+      },
+      async setMainLine(openingId, lineId) {
+        const lines = await this.listLines(openingId)
+        const target = lines.find((line) => line.id === lineId)
+        if (!target) return
+        const lowest = lines.reduce((min, line) => Math.min(min, line.sortOrder), target.sortOrder)
+        if (target.sortOrder <= lowest && lines[0]?.id === lineId) return
+        await this.updateLine(lineId, { sortOrder: lowest - 1 })
       },
       async deleteLine(id) {
         const current = requireUser()

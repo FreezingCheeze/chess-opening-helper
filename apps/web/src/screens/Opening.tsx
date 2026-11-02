@@ -4,8 +4,10 @@ import {
   chooseLearning,
   findMove,
   interpretMove,
+  mainPathFrom,
   moveSquares,
   pathNotation,
+  pathPrefix,
   repertoireOf,
   sideToMove,
   type TreeMove,
@@ -25,6 +27,7 @@ export function Opening({ id }: { id: string }) {
   const [lines, setLines] = useState<LineRecord[]>([])
   const [path, setPath] = useState<string[]>([])
   const [shown, setShown] = useState<string[]>([])
+  const [trail, setTrail] = useState<string[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [opened, setOpened] = useState(false)
   const [moveText, setMoveText] = useState('')
@@ -38,6 +41,7 @@ export function Opening({ id }: { id: string }) {
     setExpanded(new Set())
     setPath([])
     setShown([])
+    setTrail([])
     setPending(null)
     setMessage('')
     setConfirm(null)
@@ -66,8 +70,63 @@ export function Opening({ id }: { id: string }) {
   useEffect(() => {
     if (!opening || opened || tree.moves.length === 0) return
     setExpanded(defaultExpanded(tree.moves))
+    setTrail((current) => (current.length > 0 ? current : mainPathFrom(tree)))
     setOpened(true)
   }, [opened, opening, lines])
+
+  const navRef = useRef({ tree, shown, trail })
+  navRef.current = { tree, shown, trail }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        stepBack()
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        stepForward()
+      }
+    }
+
+    function stepBack() {
+      const { shown: at } = navRef.current
+      if (at.length === 0) return
+      goTo(at.slice(0, -1), { keepTrail: true })
+    }
+
+    function stepForward() {
+      const { tree: currentTree, shown: at, trail: memory } = navRef.current
+      if (currentTree.moves.length === 0) return
+      const remembered = memory.length > 0 ? memory : mainPathFrom(currentTree)
+      if (pathPrefix(at, remembered) && at.length < remembered.length) {
+        goTo(remembered.slice(0, at.length + 1), { trail: remembered })
+        return
+      }
+      const node = at.length === 0 ? null : findMove(currentTree, at)
+      const options = at.length === 0 ? currentTree.moves : (node?.children ?? [])
+      if (options.length === 0) return
+      const next = [...at, options[0].san]
+      goTo(next, { trail: mainPathFrom(currentTree, next) })
+    }
+
+    function goTo(next: string[], options?: { trail?: string[]; keepTrail?: boolean }) {
+      setShown(next)
+      setPath(next)
+      setPending(null)
+      setMessage('')
+      setExpanded((current) => withPathExpanded(navRef.current.tree.moves, next, current))
+      if (options?.trail) setTrail(options.trail)
+      else if (!options?.keepTrail) {
+        setTrail((current) => (pathPrefix(next, current) ? current : mainPathFrom(navRef.current.tree, next)))
+      }
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   if (opening === undefined) return <p>Loading…</p>
   if (!opening) return <p>That opening is not on this device.</p>
@@ -87,22 +146,72 @@ export function Opening({ id }: { id: string }) {
   const only = through.length === 1 ? through[0] : null
   const notation = pathNotation(tree.fen, board.ok ? shown : [])
   const showingSelection = path.length === shown.length && path.every((san, index) => san === shown[index])
+  const remembered = trail.length > 0 ? trail : mainPathFrom(tree)
+  const trackedNode = remembered.length > 0 ? findMove(tree, remembered) : null
+  const tracked =
+    (trackedNode?.lineIds[0] ? lines.find((line) => line.id === trackedNode.lineIds[0]) : null) ?? lines[0] ?? null
+  const mainLine = lines[0] ?? null
+  const canBack = shown.length > 0
+  const canForward =
+    (pathPrefix(shown, remembered) && shown.length < remembered.length) ||
+    (shown.length === 0 ? tree.moves.length > 0 : (findMove(tree, shown)?.children.length ?? 0) > 0)
 
   function revealPath(next: string[]) {
     setExpanded((current) => withPathExpanded(tree.moves, next, current))
   }
 
+  function rememberPath(next: string[]) {
+    setTrail((current) => (pathPrefix(next, current) ? current : mainPathFrom(tree, next)))
+  }
+
   function pickPath(next: string[]) {
     setPath(next)
     setMessage('')
+    rememberPath(next)
     if (next.length === 0) return
     revealPath(next)
   }
 
   function showSelection() {
     setShown(path)
+    rememberPath(path)
     setPending(null)
     setMessage('')
+  }
+
+  function stepBack() {
+    if (!canBack) return
+    const next = shown.slice(0, -1)
+    setShown(next)
+    setPath(next)
+    setPending(null)
+    setMessage('')
+    revealPath(next)
+  }
+
+  function stepForward() {
+    if (!canForward) return
+    if (pathPrefix(shown, remembered) && shown.length < remembered.length) {
+      const next = remembered.slice(0, shown.length + 1)
+      setShown(next)
+      setPath(next)
+      setTrail(remembered)
+      setPending(null)
+      setMessage('')
+      revealPath(next)
+      return
+    }
+    const node = shown.length === 0 ? null : findMove(tree, shown)
+    const options = shown.length === 0 ? tree.moves : (node?.children ?? [])
+    if (options.length === 0) return
+    const next = [...shown, options[0].san]
+    const nextTrail = mainPathFrom(tree, next)
+    setShown(next)
+    setPath(next)
+    setTrail(nextTrail)
+    setPending(null)
+    setMessage('')
+    revealPath(next)
   }
 
   function toggleExpanded(key: string, nodePath: string[]) {
@@ -216,10 +325,16 @@ export function Opening({ id }: { id: string }) {
     }
     setPath(result.path)
     setShown(result.path)
+    setTrail(mainPathFrom(tree, result.path))
     revealPath(result.path)
     setMoveText('')
     setMessage('')
     setPending(null)
+  }
+
+  async function makeMainLine() {
+    if (!only) return
+    await data.setMainLine(active.id, only.id)
   }
 
   function onMove(from: string, to: string, promotion?: string) {
@@ -248,14 +363,40 @@ export function Opening({ id }: { id: string }) {
       </label>
       <p className="quiet">{active.myColor === 'white' ? 'You play White.' : 'You play Black.'}</p>
       <div className="stage">
-        <Board
-          fen={fen}
-          orientation={active.myColor}
-          interactive={!pending}
-          epoch={epoch}
-          lastMove={board.lastMove}
-          onMove={(from, to) => onMove(from, to)}
-        />
+        <div className="board-side stack">
+          <Board
+            fen={fen}
+            orientation={active.myColor}
+            interactive={!pending}
+            epoch={epoch}
+            lastMove={board.lastMove}
+            onMove={(from, to) => onMove(from, to)}
+          />
+          <div className="board-nav" role="group" aria-label="Move history">
+            <button type="button" className="btn secondary" aria-label="Previous move" disabled={!canBack} onClick={stepBack}>
+              ←
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              aria-label="Next move"
+              disabled={!canForward}
+              onClick={stepForward}
+            >
+              →
+            </button>
+          </div>
+          <div className="board-line">
+            <p className="board-line-title">{tracked?.name || tracked?.groupName || 'Main line'}</p>
+            <p className="board-line-moves">
+              {remembered.length === 0 ? (
+                <span className="quiet">No moves yet</span>
+              ) : (
+                <LinePlies startFen={tree.fen} trail={remembered} at={shown.length} />
+              )}
+            </p>
+          </div>
+        </div>
         <div className="panel stack">
           <p className="prompt">{notation || 'Starting position'}</p>
           <p className="quiet tree-help">
@@ -302,6 +443,15 @@ export function Opening({ id }: { id: string }) {
               }}
             />
           </label>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={!only || only.id === mainLine?.id}
+            aria-pressed={Boolean(only && only.id === mainLine?.id)}
+            onClick={() => void makeMainLine()}
+          >
+            Set as main line
+          </button>
           <form
             className="add-move"
             onSubmit={(event) => {
@@ -378,6 +528,7 @@ export function Opening({ id }: { id: string }) {
                 setConfirm(null)
                 setPath([])
                 setShown([])
+                setTrail([])
               } else setConfirm(only.id)
             }}
           >
@@ -419,6 +570,25 @@ export function Opening({ id }: { id: string }) {
         {confirm === 'opening' ? 'Confirm remove opening' : 'Remove opening'}
       </button>
     </div>
+  )
+}
+
+function LinePlies({ startFen, trail, at }: { startFen: string; trail: string[]; at: number }) {
+  const whiteStarts = sideToMove(startFen) === 'white'
+  return (
+    <>
+      {trail.map((san, ply) => {
+        const whiteMove = whiteStarts ? ply % 2 === 0 : ply % 2 === 1
+        const number = Math.floor((ply + (whiteStarts ? 0 : 1)) / 2) + 1
+        const label = whiteMove ? `${number}. ${san}` : ply === 0 ? `${number}... ${san}` : san
+        const className = ply === at - 1 ? 'board-ply current' : ply < at ? 'board-ply played' : 'board-ply ahead'
+        return (
+          <span key={`${ply}-${san}`} className={className}>
+            {label}
+          </span>
+        )
+      })}
+    </>
   )
 }
 
@@ -523,6 +693,7 @@ function TreeRows({
               >
                 <span className="tree-san">{node.moveLabel}</span>
                 {node.you ? <span className="tree-you">you</span> : null}
+                {node.main ? <span className="tree-you">main</span> : null}
                 {node.badge ? <span className="tree-label">{node.badge}</span> : null}
                 {node.note ? <span className="tree-label">{node.note}</span> : null}
                 {aside ? <span className="tree-label">Later</span> : null}

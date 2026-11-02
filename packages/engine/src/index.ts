@@ -52,7 +52,7 @@ export {
 export type { EditorMove, EditorState } from './editor'
 export { studyView } from './study'
 export type { StudyBranch, StudyView } from './study'
-export { addRepertoireMove, findMove, pathNotation, repertoireOf } from './tree'
+export { addRepertoireMove, findMove, mainPathFrom, pathNotation, pathPrefix, repertoireOf } from './tree'
 export type { LinePatch, Repertoire, StoredLine, TreeMove } from './tree'
 export { caroKannLines, pgnForMoves, repertoireAdjustments } from './caro'
 export type { CaroLine } from './caro'

@@ -19,9 +19,11 @@ import {
   firstPath,
   importPgn,
   lichessStudyId,
+  mainPathFrom,
   newEditor,
   next,
   pathNotation,
+  pathPrefix,
   playSan,
   positionKey,
   readableRows,
@@ -274,9 +276,11 @@ describe('repertoire tree', () => {
   it('shows every variation, including ones set aside', () => {
     const tree = repertoireOf(lines(), 'black')
     const d5 = findMove(tree, ['e4', 'c6', 'd4', 'd5'])
-    expect(d5?.children.map((move) => move.san).sort()).toEqual(['Nc3', 'exd5', 'f3'])
+    expect(d5?.children.map((move) => move.san)).toEqual(['Nc3', 'exd5', 'f3'])
     const classical = d5?.children.find((move) => move.san === 'Nc3')
     const exchange = d5?.children.find((move) => move.san === 'exd5')
+    expect(classical?.main).toBe(true)
+    expect(exchange?.main).toBe(false)
     expect(classical?.badge).toBe('Classical')
     expect(classical?.learningCount).toBe(1)
     expect(exchange?.badge).toBe('Exchange')
@@ -284,6 +288,17 @@ describe('repertoire tree', () => {
     expect(classical?.moveLabel).toBe('3. Nc3')
     expect(findMove(tree, ['e4', 'c6'])?.moveLabel).toBe('1... c6')
     expect(pathNotation(tree.fen, ['e4', 'c6', 'd4', 'd5', 'Nc3'])).toBe('1. e4 c6 2. d4 d5 3. Nc3')
+  })
+
+  it('keeps the first line as the main continuation at every branch', () => {
+    const drafts = lines()
+    const fantasyFirst = [...drafts].sort((left, right) => Number(left.name !== 'Fantasy') - Number(right.name !== 'Fantasy'))
+    const tree = repertoireOf(fantasyFirst, 'black')
+    const d5 = findMove(tree, ['e4', 'c6', 'd4', 'd5'])
+    expect(d5?.children.map((move) => move.san)).toEqual(['f3', 'Nc3', 'exd5'])
+    expect(d5?.children[0]?.main).toBe(true)
+    expect(mainPathFrom(tree).slice(0, 6)).toEqual(['e4', 'c6', 'd4', 'd5', 'f3', 'dxe4'])
+    expect(pathPrefix(['e4', 'c6'], mainPathFrom(tree))).toBe(true)
   })
 
   it('extends the line that ends on the selected move', () => {

@@ -150,9 +150,51 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
   .stage { grid-template-columns: minmax(320px, 560px) minmax(280px, 1fr); align-items: start; }
 }
 
-.board-frame {
+.board-side {
   width: min(100%, 560px);
   margin: 0 auto;
+}
+
+.board-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.board-line {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 16px;
+  min-height: 5.5rem;
+}
+
+.board-line-title {
+  font-family: Georgia, "Iowan Old Style", serif;
+  font-size: 1.15rem;
+  margin: 0 0 8px;
+}
+
+.board-line-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.board-ply.played { color: var(--ink); }
+.board-ply.current {
+  color: var(--accent-deep);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.board-ply.ahead { color: var(--muted); }
+
+.board-frame {
+  width: 100%;
   background: var(--wood);
   padding: 10px;
   border-radius: 18px;

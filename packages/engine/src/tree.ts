@@ -11,6 +11,7 @@ export type TreeMove = {
   fen: string
   moveLabel: string
   you: boolean
+  main: boolean
   badge?: string
   note?: string
   lineIds: string[]
@@ -80,7 +81,7 @@ export function repertoireOf(lines: StoredLine[], myColor: Color): Repertoire {
       if (!order.includes(step.san)) order.push(step.san)
       if (step.comment && !comments.has(step.san)) comments.set(step.san, step.comment)
     }
-    return order.map((san) => {
+    return order.map((san, index) => {
       const applied = applySan(fen, san)
       const nextFen = applied?.fen ?? fen
       const path = [...prefix, san]
@@ -99,6 +100,7 @@ export function repertoireOf(lines: StoredLine[], myColor: Color): Repertoire {
         fen: nextFen,
         moveLabel: moveLabel(startFen, prefix.length, san),
         you: sideToMove(fen) === myColor,
+        main: order.length > 1 && index === 0,
         badge: badge && badge !== san ? badge : undefined,
         note: note && note !== badge && note !== san ? note : undefined,
         lineIds,
@@ -121,6 +123,22 @@ export function findMove(tree: Repertoire, path: string[]): TreeMove | null {
     moves = found.children
   }
   return found
+}
+
+/** Follow the first (main) child from `prefix` to a leaf. */
+export function mainPathFrom(tree: Repertoire, prefix: string[] = []): string[] {
+  const path = [...prefix]
+  let children = prefix.length === 0 ? tree.moves : findMove(tree, prefix)?.children
+  if (!children) return path
+  while (children.length > 0) {
+    path.push(children[0].san)
+    children = children[0].children
+  }
+  return path
+}
+
+export function pathPrefix(path: string[], full: string[]): boolean {
+  return path.length <= full.length && path.every((san, index) => full[index] === san)
 }
 
 export function pathNotation(startFen: string, path: string[]): string {
