@@ -21,6 +21,7 @@ export function Opening({ id }: { id: string }) {
   const [opening, setOpening] = useState<OpeningRecord | null | undefined>(undefined)
   const [lines, setLines] = useState<LineRecord[]>([])
   const [path, setPath] = useState<string[]>([])
+  const [shown, setShown] = useState<string[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [opened, setOpened] = useState(false)
   const [moveText, setMoveText] = useState('')
@@ -34,6 +35,7 @@ export function Opening({ id }: { id: string }) {
     setOpened(false)
     setExpanded(new Set())
     setPath([])
+    setShown([])
     void (async () => {
       const found = await data.getOpening(id)
       const stored = found ? await data.listLines(id) : []
@@ -60,8 +62,8 @@ export function Opening({ id }: { id: string }) {
 
   const active = opening
   const selected = path.length ? findMove(tree, path) : null
-  const played = replayPath(tree.fen, path)
-  const fen = played.fen
+  const board = replayPath(tree.fen, shown)
+  const fen = board.fen
   const turn = sideToMove(fen)
   const yours = turn === active.myColor
   const actor = turn === 'white' ? 'White' : 'Black'
@@ -71,7 +73,8 @@ export function Opening({ id }: { id: string }) {
     .filter((line): line is LineRecord => Boolean(line))
   const learningCount = through.filter((line) => line.included).length
   const only = through.length === 1 ? through[0] : null
-  const notation = pathNotation(tree.fen, played.ok ? path : [])
+  const notation = pathNotation(tree.fen, board.ok ? shown : [])
+  const showingSelection = path.length === shown.length && path.every((san, index) => san === shown[index])
 
   function revealPath(next: string[]) {
     setExpanded((current) => withPathExpanded(tree.moves, next, current))
@@ -80,9 +83,14 @@ export function Opening({ id }: { id: string }) {
   function pickPath(next: string[]) {
     setPath(next)
     setMessage('')
-    setPending(null)
     if (next.length === 0) return
     revealPath(next)
+  }
+
+  function showSelection() {
+    setShown(path)
+    setPending(null)
+    setMessage('')
   }
 
   function toggleExpanded(key: string, nodePath: string[]) {
@@ -146,7 +154,7 @@ export function Opening({ id }: { id: string }) {
   }
 
   async function commit(san: string) {
-    const result = addRepertoireMove(lines, active.myColor, played.ok ? path : [], san)
+    const result = addRepertoireMove(lines, active.myColor, board.ok ? shown : [], san)
     if ('error' in result) {
       setMessage(result.error)
       setEpoch((tick) => tick + 1)
@@ -173,6 +181,7 @@ export function Opening({ id }: { id: string }) {
       }
     }
     setPath(result.path)
+    setShown(result.path)
     revealPath(result.path)
     setMoveText('')
     setMessage('')
@@ -210,7 +219,7 @@ export function Opening({ id }: { id: string }) {
           orientation={active.myColor}
           interactive={!pending}
           epoch={epoch}
-          lastMove={played.lastMove}
+          lastMove={board.lastMove}
           onMove={(from, to) => onMove(from, to)}
         />
         <div className="panel stack">
@@ -279,6 +288,9 @@ export function Opening({ id }: { id: string }) {
           </form>
           {tree.moves.length > 0 ? (
             <div className="tree-actions" role="group" aria-label="Tree">
+              <button type="button" className="btn secondary" disabled={showingSelection} onClick={showSelection}>
+                Show
+              </button>
               <button
                 type="button"
                 className="btn secondary"
@@ -328,6 +340,7 @@ export function Opening({ id }: { id: string }) {
                   void data.deleteLine(only.id)
                   setConfirm(null)
                   setPath([])
+                  setShown([])
                 } else setConfirm(only.id)
               }}
             >
