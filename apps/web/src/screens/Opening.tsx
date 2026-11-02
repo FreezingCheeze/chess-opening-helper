@@ -258,51 +258,50 @@ export function Opening({ id }: { id: string }) {
         />
         <div className="panel stack">
           <p className="prompt">{notation || 'Starting position'}</p>
-          <p className="quiet">
-            {yours
-              ? 'Your move. Add the one reply you want to practice.'
-              : `${actor} to move. Add a try, or pick one in the tree.`}
+          <p className="quiet tree-help">
+            {lines.length === 0
+              ? 'Play the first move on the board to start a line.'
+              : yours
+                ? 'Your move. Add the one reply you want to practice.'
+                : `${actor} to move. Add a try, or pick one in the tree.`}
           </p>
-          {lines.length === 0 ? (
-            <p className="quiet">Play the first move on the board to start a line.</p>
-          ) : through.length > 0 ? (
-            <p className="quiet">
-              {learningCount} of {through.length} learning
-              {through.length <= 4 ? ` · ${through.map((line) => line.name).join(', ')}` : ''}
-            </p>
-          ) : null}
-          {message ? <p className="note">{message}</p> : null}
+          <p className="quiet tree-status">
+            {through.length > 0 ? `${learningCount} of ${through.length} learning` : 'Pick a move in the tree.'}
+          </p>
+          <p className={message ? 'note tree-message' : 'quiet tree-message'}>{message || '\u00a0'}</p>
           {pending ? <PromotionPicker onPick={(piece) => onMove(pending.from, pending.to, piece)} /> : null}
-          {through.length > 0 ? (
-            <div className="segment" role="group" aria-label="Learning">
-              <button
-                type="button"
-                className="btn secondary"
-                aria-pressed={learningCount === through.length}
-                onClick={() => void setLearning(true)}
-              >
-                Learning
-              </button>
-              <button
-                type="button"
-                className="btn secondary"
-                aria-pressed={learningCount === 0}
-                onClick={() => void setLearning(false)}
-              >
-                Later
-              </button>
-            </div>
-          ) : null}
-          {only ? (
-            <label>
-              <span>Line</span>
-              <input
-                key={`${only.id}-${only.updatedAt}`}
-                defaultValue={only.name}
-                onBlur={(event) => void rename(only, event.target.value)}
-              />
-            </label>
-          ) : null}
+          <div className="segment" role="group" aria-label="Learning">
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={through.length === 0}
+              aria-pressed={through.length > 0 && learningCount === through.length}
+              onClick={() => void setLearning(true)}
+            >
+              Learning
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={through.length === 0}
+              aria-pressed={through.length > 0 && learningCount === 0}
+              onClick={() => void setLearning(false)}
+            >
+              Later
+            </button>
+          </div>
+          <label>
+            <span>Line</span>
+            <input
+              key={only ? `${only.id}-${only.updatedAt}` : 'line-empty'}
+              defaultValue={only?.name ?? ''}
+              disabled={!only}
+              placeholder="Select one line"
+              onBlur={(event) => {
+                if (only) void rename(only, event.target.value)
+              }}
+            />
+          </label>
           <form
             className="add-move"
             onSubmit={(event) => {
@@ -320,29 +319,32 @@ export function Opening({ id }: { id: string }) {
               Add
             </button>
           </form>
-          {tree.moves.length > 0 ? (
-            <div className="tree-actions" role="group" aria-label="Tree">
-              <button type="button" className="btn secondary" disabled={showingSelection} onClick={showSelection}>
-                Show
-              </button>
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={branchKeys.length === 0}
-                onClick={expandSelected}
-              >
-                Expand
-              </button>
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={branchKeys.length === 0}
-                onClick={collapseSelected}
-              >
-                Collapse
-              </button>
-            </div>
-          ) : null}
+          <div className="tree-actions" role="group" aria-label="Tree">
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={tree.moves.length === 0 || showingSelection}
+              onClick={showSelection}
+            >
+              Show
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={branchKeys.length === 0}
+              onClick={expandSelected}
+            >
+              Expand
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={branchKeys.length === 0}
+              onClick={collapseSelected}
+            >
+              Collapse
+            </button>
+          </div>
           <div className="tree-scroll">
             <button
               type="button"
@@ -365,22 +367,22 @@ export function Opening({ id }: { id: string }) {
               </ul>
             ) : null}
           </div>
-          {only ? (
-            <button
-              className="btn warn"
-              type="button"
-              onClick={() => {
-                if (confirm === only.id) {
-                  void data.deleteLine(only.id)
-                  setConfirm(null)
-                  setPath([])
-                  setShown([])
-                } else setConfirm(only.id)
-              }}
-            >
-              {confirm === only.id ? 'Confirm remove' : `Remove ${only.name}`}
-            </button>
-          ) : null}
+          <button
+            className="btn warn"
+            type="button"
+            disabled={!only}
+            onClick={() => {
+              if (!only) return
+              if (confirm === only.id) {
+                void data.deleteLine(only.id)
+                setConfirm(null)
+                setPath([])
+                setShown([])
+              } else setConfirm(only.id)
+            }}
+          >
+            {only && confirm === only.id ? 'Confirm remove' : 'Remove line'}
+          </button>
         </div>
       </div>
       <button
@@ -391,11 +393,17 @@ export function Opening({ id }: { id: string }) {
       >
         Practice what I’m learning
       </button>
-      {only ? (
-        <button className="btn secondary" type="button" onClick={() => go(`/o/${active.id}/practice/${only.id}`)}>
-          Practice this line
-        </button>
-      ) : null}
+      <button
+        className="btn secondary"
+        type="button"
+        disabled={!only}
+        onClick={() => {
+          if (!only) return
+          go(`/o/${active.id}/practice/${only.id}`)
+        }}
+      >
+        Practice this line
+      </button>
       <button className="btn secondary" type="button" onClick={() => go(`/o/${active.id}/add`)}>
         Add a line
       </button>

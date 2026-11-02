@@ -4,6 +4,7 @@ import {
   answer,
   applySan,
   caroKannLines,
+  pgnForMoves,
   repertoireAdjustments,
   beginReplay,
   chooseLearning,
@@ -350,7 +351,19 @@ describe('Caro-Kann repertoire', () => {
       expect(sideToMove(fen)).toBe('white')
     }
     expect(groups).toEqual(new Set(['Classical', 'Advance', 'Exchange', 'Fantasy']))
+    expect(caroKannLines.length).toBeGreaterThanOrEqual(50)
     expect(replies.size).toBeGreaterThan(20)
+    expect(
+      compile(
+        caroKannLines.map((line) => ({
+          id: line.slug,
+          name: line.name,
+          groupName: line.groupName,
+          pgn: pgnForMoves(line.moves),
+        })),
+        'black',
+      ).conflicts,
+    ).toHaveLength(0)
   })
 
   it('replaces a short line and sets a different black reply aside', () => {
