@@ -242,6 +242,28 @@ button.tree-twist:hover { background: rgba(14, 107, 82, 0.08); color: var(--ink)
   text-align: left;
   padding: 6px 8px;
 }
+.tree-bulk {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 4px;
+}
+.tree-bulk-btn {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+.tree-bulk-btn:hover { background: rgba(14, 107, 82, 0.08); color: var(--ink); }
 .tree-san { font-weight: 700; }
 .tree-you {
   color: var(--accent-deep);
