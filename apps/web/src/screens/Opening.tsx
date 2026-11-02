@@ -180,11 +180,17 @@ export function Opening({ id }: { id: string }) {
     revealPath(next)
   }
 
-  function showSelection() {
-    setShown(path)
-    rememberPath(path)
+  function showPath(next: string[]) {
+    setPath(next)
+    setShown(next)
+    rememberPath(next)
     setPending(null)
     setMessage('')
+    if (next.length > 0) revealPath(next)
+  }
+
+  function showSelection() {
+    showPath(path)
   }
 
   function stepBack() {
@@ -510,6 +516,7 @@ export function Opening({ id }: { id: string }) {
               type="button"
               className={path.length === 0 ? 'tree-row current' : 'tree-row'}
               onClick={() => pickPath([])}
+              onDoubleClick={() => showPath([])}
             >
               <span className="tree-twist" aria-hidden="true" />
               <span className="tree-san">Start</span>
@@ -522,6 +529,7 @@ export function Opening({ id }: { id: string }) {
                   selected={path}
                   expanded={expanded}
                   onPick={pickPath}
+                  onShow={showPath}
                   onToggle={toggleExpanded}
                 />
               </ul>
@@ -658,6 +666,7 @@ function TreeRows({
   selected,
   expanded,
   onPick,
+  onShow,
   onToggle,
 }: {
   nodes: TreeMove[]
@@ -665,6 +674,7 @@ function TreeRows({
   selected: string[]
   expanded: Set<string>
   onPick: (path: string[]) => void
+  onShow: (path: string[]) => void
   onToggle: (key: string, path: string[]) => void
 }) {
   return (
@@ -700,6 +710,7 @@ function TreeRows({
                 aria-selected={current}
                 className="tree-pick"
                 onClick={() => onPick(node.path)}
+                onDoubleClick={() => onShow(node.path)}
               >
                 <span className="tree-san">{node.moveLabel}</span>
                 {node.you ? <span className="tree-you">you</span> : null}
@@ -722,6 +733,7 @@ function TreeRows({
                   selected={selected}
                   expanded={expanded}
                   onPick={onPick}
+                  onShow={onShow}
                   onToggle={onToggle}
                 />
               </ul>
