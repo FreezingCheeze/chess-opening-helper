@@ -100,33 +100,30 @@ export function Opening({ id }: { id: string }) {
     })
   }
 
-  function expandAllUnder(node: TreeMove) {
+  const branchKeys = selected
+    ? expandableKeys(selected)
+    : path.length === 0
+      ? expandableKeysFrom(tree.moves)
+      : []
+
+  function expandSelected() {
+    if (branchKeys.length === 0) return
     setExpanded((current) => {
       const next = new Set(current)
-      for (const key of expandableKeys(node)) next.add(key)
+      for (const key of branchKeys) next.add(key)
       return next
     })
   }
 
-  function collapseAllUnder(node: TreeMove, nodePath: string[]) {
-    const keys = new Set(expandableKeys(node))
+  function collapseSelected() {
+    if (branchKeys.length === 0) return
+    const keys = new Set(branchKeys)
     setExpanded((current) => {
       const next = new Set(current)
       for (const key of keys) next.delete(key)
       return next
     })
-    if (path.length > nodePath.length && nodePath.every((san, index) => san === path[index])) {
-      setPath(nodePath)
-    }
-  }
-
-  function expandWholeTree() {
-    setExpanded(new Set(expandableKeysFrom(tree.moves)))
-  }
-
-  function collapseWholeTree() {
-    setExpanded(new Set())
-    setPath([])
+    if (selected && path.length > selected.path.length) setPath(selected.path)
   }
 
   async function rename(line: LineRecord, name: string) {
@@ -280,23 +277,35 @@ export function Opening({ id }: { id: string }) {
               Add
             </button>
           </form>
-          <div className="tree-scroll">
-            <div className={path.length === 0 ? 'tree-row current' : 'tree-row'}>
-              <span className="tree-twist" aria-hidden="true" />
-              <button type="button" className="tree-pick" onClick={() => pickPath([])}>
-                <span className="tree-san">Start</span>
+          {tree.moves.length > 0 ? (
+            <div className="tree-actions" role="group" aria-label="Tree">
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={branchKeys.length === 0}
+                onClick={expandSelected}
+              >
+                Expand
               </button>
-              {tree.moves.length > 0 ? (
-                <span className="tree-bulk">
-                  <button type="button" className="tree-bulk-btn" onClick={expandWholeTree}>
-                    Expand all
-                  </button>
-                  <button type="button" className="tree-bulk-btn" onClick={collapseWholeTree}>
-                    Collapse all
-                  </button>
-                </span>
-              ) : null}
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={branchKeys.length === 0}
+                onClick={collapseSelected}
+              >
+                Collapse
+              </button>
             </div>
+          ) : null}
+          <div className="tree-scroll">
+            <button
+              type="button"
+              className={path.length === 0 ? 'tree-row current' : 'tree-row'}
+              onClick={() => pickPath([])}
+            >
+              <span className="tree-twist" aria-hidden="true" />
+              <span className="tree-san">Start</span>
+            </button>
             {tree.moves.length > 0 ? (
               <ul className="tree" role="tree">
                 <TreeRows
@@ -306,8 +315,6 @@ export function Opening({ id }: { id: string }) {
                   expanded={expanded}
                   onPick={pickPath}
                   onToggle={toggleExpanded}
-                  onExpandAll={expandAllUnder}
-                  onCollapseAll={collapseAllUnder}
                 />
               </ul>
             ) : null}
@@ -417,8 +424,6 @@ function TreeRows({
   expanded,
   onPick,
   onToggle,
-  onExpandAll,
-  onCollapseAll,
 }: {
   nodes: TreeMove[]
   depth: number
@@ -426,8 +431,6 @@ function TreeRows({
   expanded: Set<string>
   onPick: (path: string[]) => void
   onToggle: (key: string, path: string[]) => void
-  onExpandAll: (node: TreeMove) => void
-  onCollapseAll: (node: TreeMove, path: string[]) => void
 }) {
   return (
     <>
@@ -474,26 +477,6 @@ function TreeRows({
                   </span>
                 ) : null}
               </button>
-              {hasChildren ? (
-                <span className="tree-bulk">
-                  <button
-                    type="button"
-                    className="tree-bulk-btn"
-                    aria-label={`Expand all under ${node.moveLabel}`}
-                    onClick={() => onExpandAll(node)}
-                  >
-                    Expand all
-                  </button>
-                  <button
-                    type="button"
-                    className="tree-bulk-btn"
-                    aria-label={`Collapse all under ${node.moveLabel}`}
-                    onClick={() => onCollapseAll(node, node.path)}
-                  >
-                    Collapse all
-                  </button>
-                </span>
-              ) : null}
             </div>
             {open ? (
               <ul className="tree" role="group">
@@ -504,8 +487,6 @@ function TreeRows({
                   expanded={expanded}
                   onPick={onPick}
                   onToggle={onToggle}
-                  onExpandAll={onExpandAll}
-                  onCollapseAll={onCollapseAll}
                 />
               </ul>
             ) : null}
