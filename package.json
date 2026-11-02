@@ -1,0 +1,14 @@
+{
+  "name": "chess-opening-helper",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @opening/web",
+    "test": "npm run test -w @opening/engine",
+    "build": "npm run build -w @opening/web",
+    "typecheck": "npm run typecheck -w @opening/web"
+  }
+}
