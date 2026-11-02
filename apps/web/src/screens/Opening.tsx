@@ -1,6 +1,7 @@
 import {
   addRepertoireMove,
   applySan,
+  chooseLearning,
   findMove,
   interpretMove,
   moveSquares,
@@ -9,7 +10,7 @@ import {
   sideToMove,
   type TreeMove,
 } from '@opening/engine'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Board, PromotionPicker } from '../components/Board'
 import { BackButton } from '../components/Bits'
 import { useData } from '../lib/data'
@@ -18,6 +19,8 @@ import { go } from '../lib/routes'
 
 export function Opening({ id }: { id: string }) {
   const data = useData()
+  const dataRef = useRef(data)
+  dataRef.current = data
   const [opening, setOpening] = useState<OpeningRecord | null | undefined>(undefined)
   const [lines, setLines] = useState<LineRecord[]>([])
   const [path, setPath] = useState<string[]>([])
@@ -31,14 +34,23 @@ export function Opening({ id }: { id: string }) {
   const [epoch, setEpoch] = useState(0)
 
   useEffect(() => {
-    let cancel = false
     setOpened(false)
     setExpanded(new Set())
     setPath([])
     setShown([])
+    setPending(null)
+    setMessage('')
+    setConfirm(null)
+    setOpening(undefined)
+    setLines([])
+  }, [id, data.user?.id])
+
+  useEffect(() => {
+    let cancel = false
     void (async () => {
-      const found = await data.getOpening(id)
-      const stored = found ? await data.listLines(id) : []
+      const api = dataRef.current
+      const found = await api.getOpening(id)
+      const stored = found ? await api.listLines(id) : []
       if (!cancel) {
         setOpening(found ?? null)
         setLines(stored)
@@ -47,7 +59,7 @@ export function Opening({ id }: { id: string }) {
     return () => {
       cancel = true
     }
-  }, [data, id])
+  }, [id, data.user?.id, data.revision])
 
   const tree = opening ? repertoireOf(lines, opening.myColor) : { fen: '', moves: [] as TreeMove[] }
 
@@ -141,15 +153,37 @@ export function Opening({ id }: { id: string }) {
   }
 
   async function setLearning(included: boolean) {
+    let next = lines
+    const apply = (lineId: string, value: boolean) => {
+      const drafts = next.map((line) => ({
+        id: line.id,
+        name: line.name,
+        groupName: line.groupName,
+        pgn: line.pgn,
+        included: line.included,
+        yourChoice: false,
+      }))
+      const result = chooseLearning(drafts, lineId, value, active.myColor)
+      next = next.map((line) => {
+        const draft = result.drafts.find((item) => item.id === line.id)
+        return draft ? { ...line, included: draft.included } : line
+      })
+    }
     const ordered = [...through].sort((left, right) => Number(left.included) - Number(right.included))
     for (const line of included ? ordered : through) {
-      if (line.included === included) continue
-      await data.setLineLearning(active.id, line.id, included, active.myColor)
+      if (next.find((item) => item.id === line.id)?.included === included) continue
+      apply(line.id, included)
     }
     if (included) {
-      for (const line of through.filter((item) => item.included)) {
-        await data.setLineLearning(active.id, line.id, true, active.myColor)
+      for (const line of through) {
+        if (!next.find((item) => item.id === line.id)?.included) continue
+        apply(line.id, true)
       }
+    }
+    const changed = next.filter((line) => lines.find((item) => item.id === line.id)?.included !== line.included)
+    setLines(next)
+    for (const line of changed) {
+      await data.setLineLearning(active.id, line.id, line.included, active.myColor)
     }
   }
 
