@@ -196,14 +196,22 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
   padding: 6px;
 }
 
-.tree { list-style: none; margin: 0; padding: 0; }
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: max-content;
+  min-width: 100%;
+}
 
 .tree-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  width: 100%;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
   min-height: 44px;
   border: 0;
   border-radius: 10px;
@@ -230,11 +238,11 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
 button.tree-twist:hover { background: rgba(14, 107, 82, 0.08); color: var(--ink); }
 .tree-pick {
   display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   align-items: baseline;
   gap: 8px;
-  min-width: 0;
+  min-width: max-content;
   min-height: 40px;
   border: 0;
   border-radius: 8px;
@@ -242,6 +250,7 @@ button.tree-twist:hover { background: rgba(14, 107, 82, 0.08); color: var(--ink)
   color: inherit;
   text-align: left;
   padding: 6px 8px;
+  white-space: nowrap;
 }
 .tree-actions { display: flex; gap: 8px; }
 .tree-actions .btn { flex: 1 1 0; }
