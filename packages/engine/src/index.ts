@@ -52,3 +52,5 @@ export {
 export type { EditorMove, EditorState } from './editor'
 export { studyView } from './study'
 export type { StudyBranch, StudyView } from './study'
+export { addRepertoireMove, findMove, pathNotation, repertoireOf } from './tree'
+export type { LinePatch, Repertoire, StoredLine, TreeMove } from './tree'

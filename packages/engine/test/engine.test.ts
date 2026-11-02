@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addRepertoireMove,
   answer,
   beginReplay,
   chooseLearning,
@@ -10,13 +11,17 @@ import {
   currentStep,
   editorChoices,
   editorDrafts,
+  findMove,
+  firstPath,
   importPgn,
   lichessStudyId,
   newEditor,
   next,
+  pathNotation,
   playSan,
   positionKey,
   readableRows,
+  repertoireOf,
   resetDraftIds,
   rewindForOpponentTry,
   sessionView,
@@ -251,6 +256,71 @@ describe('study and editor', () => {
     expect(drafts.every((line) => line.included)).toBe(true)
     state = undoEditor(branched)
     expect(editorChoices(state).map((move) => move.san)).toEqual(['Nc3'])
+  })
+})
+
+describe('repertoire tree', () => {
+  const lines = () => {
+    resetDraftIds()
+    return importPgn(caro, 'black').drafts.map((line) => ({ ...line, included: line.name === 'Classical' }))
+  }
+
+  it('shows every variation, including ones set aside', () => {
+    const tree = repertoireOf(lines(), 'black')
+    const d5 = findMove(tree, ['e4', 'c6', 'd4', 'd5'])
+    expect(d5?.children.map((move) => move.san).sort()).toEqual(['Nc3', 'exd5', 'f3'])
+    const classical = d5?.children.find((move) => move.san === 'Nc3')
+    const exchange = d5?.children.find((move) => move.san === 'exd5')
+    expect(classical?.badge).toBe('Classical')
+    expect(classical?.learningCount).toBe(1)
+    expect(exchange?.badge).toBe('Exchange')
+    expect(exchange?.learningCount).toBe(0)
+    expect(classical?.moveLabel).toBe('3. Nc3')
+    expect(findMove(tree, ['e4', 'c6'])?.moveLabel).toBe('1... c6')
+    expect(pathNotation(tree.fen, ['e4', 'c6', 'd4', 'd5', 'Nc3'])).toBe('1. e4 c6 2. d4 d5 3. Nc3')
+  })
+
+  it('extends the line that ends on the selected move', () => {
+    const classical = lines().find((line) => line.name === 'Classical')
+    if (!classical) throw new Error('missing classical')
+    const result = addRepertoireMove(
+      [classical],
+      'black',
+      ['e4', 'c6', 'd4', 'd5', 'Nc3', 'dxe4', 'Nxe4', 'Bf5'],
+      'Ng3',
+    )
+    if ('error' in result) throw new Error(result.error)
+    expect(result.path.at(-1)).toBe('Ng3')
+    const update = result.patches.find((patch) => patch.type === 'update' && patch.pgn)
+    if (!update || update.type !== 'update' || !update.pgn) throw new Error('missing pgn update')
+    expect(firstPath(update.pgn)?.moves.map((move) => move.san)).toEqual([
+      'e4',
+      'c6',
+      'd4',
+      'd5',
+      'Nc3',
+      'dxe4',
+      'Nxe4',
+      'Bf5',
+      'Ng3',
+    ])
+  })
+
+  it('adds another white try without turning the others off', () => {
+    const stored = lines()
+    const result = addRepertoireMove(stored, 'black', ['e4', 'c6', 'd4', 'd5'], 'c4')
+    if ('error' in result) throw new Error(result.error)
+    expect(result.patches.some((patch) => patch.type === 'update' && patch.included === false)).toBe(false)
+    expect(result.patches).toContainEqual(expect.objectContaining({ type: 'create', name: 'c4', included: true }))
+  })
+
+  it('sets the previous reply aside when you add a different one', () => {
+    const classical = lines().find((line) => line.name === 'Classical')
+    if (!classical) throw new Error('missing classical')
+    const result = addRepertoireMove(classical ? [{ ...classical, included: true }] : [], 'black', ['e4', 'c6', 'd4', 'd5', 'Nc3', 'dxe4', 'Nxe4'], 'Be6')
+    if ('error' in result) throw new Error(result.error)
+    expect(result.patches).toContainEqual({ type: 'update', id: classical.id, included: false })
+    expect(result.patches).toContainEqual(expect.objectContaining({ type: 'create', name: 'Be6', included: true }))
   })
 })
 

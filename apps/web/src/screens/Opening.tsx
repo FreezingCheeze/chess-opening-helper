@@ -1,5 +1,16 @@
-import { compile } from '@opening/engine'
+import {
+  addRepertoireMove,
+  applySan,
+  findMove,
+  interpretMove,
+  moveSquares,
+  pathNotation,
+  repertoireOf,
+  sideToMove,
+  type TreeMove,
+} from '@opening/engine'
 import { useEffect, useState } from 'react'
+import { Board, PromotionPicker } from '../components/Board'
 import { BackButton } from '../components/Bits'
 import { useData } from '../lib/data'
 import type { LineRecord, OpeningRecord } from '../lib/db'
@@ -9,7 +20,12 @@ export function Opening({ id }: { id: string }) {
   const data = useData()
   const [opening, setOpening] = useState<OpeningRecord | null | undefined>(undefined)
   const [lines, setLines] = useState<LineRecord[]>([])
+  const [path, setPath] = useState<string[]>([])
+  const [moveText, setMoveText] = useState('')
+  const [message, setMessage] = useState('')
+  const [pending, setPending] = useState<{ from: string; to: string } | null>(null)
   const [confirm, setConfirm] = useState<string | null>(null)
+  const [epoch, setEpoch] = useState(0)
 
   useEffect(() => {
     let cancel = false
@@ -29,17 +45,82 @@ export function Opening({ id }: { id: string }) {
   if (opening === undefined) return <p>Loading…</p>
   if (!opening) return <p>That opening is not on this device.</p>
 
-  const learning = lines.filter((line) => line.included)
-  const conflicts = compile(learning, opening.myColor).conflicts
-  const groups = new Map<string, LineRecord[]>()
-  for (const line of lines) {
-    const name = line.groupName || 'Lines'
-    groups.set(name, [...(groups.get(name) ?? []), line])
+  const active = opening
+  const tree = repertoireOf(lines, active.myColor)
+  const selected = path.length ? findMove(tree, path) : null
+  const played = replayPath(tree.fen, path)
+  const fen = played.fen
+  const turn = sideToMove(fen)
+  const yours = turn === active.myColor
+  const actor = turn === 'white' ? 'White' : 'Black'
+  const throughIds = selected ? selected.lineIds : path.length === 0 ? lines.map((line) => line.id) : []
+  const through = throughIds
+    .map((lineId) => lines.find((line) => line.id === lineId))
+    .filter((line): line is LineRecord => Boolean(line))
+  const learningCount = through.filter((line) => line.included).length
+  const only = through.length === 1 ? through[0] : null
+  const notation = pathNotation(tree.fen, played.ok ? path : [])
+
+  async function rename(line: LineRecord, name: string) {
+    const next = name.trim()
+    if (!next || next === line.name) return
+    await data.updateLine(line.id, { name: next })
   }
 
-  async function rename(line: LineRecord, name: string, groupName: string) {
-    if (name.trim() === line.name && groupName.trim() === line.groupName) return
-    await data.updateLine(line.id, { name: name.trim() || line.name, groupName: groupName.trim() || 'Lines' })
+  async function setLearning(included: boolean) {
+    const ordered = [...through].sort((left, right) => Number(left.included) - Number(right.included))
+    for (const line of included ? ordered : through) {
+      if (line.included === included) continue
+      await data.setLineLearning(active.id, line.id, included, active.myColor)
+    }
+    if (included) {
+      for (const line of through.filter((item) => item.included)) {
+        await data.setLineLearning(active.id, line.id, true, active.myColor)
+      }
+    }
+  }
+
+  async function commit(san: string) {
+    const result = addRepertoireMove(lines, active.myColor, played.ok ? path : [], san)
+    if ('error' in result) {
+      setMessage(result.error)
+      setEpoch((tick) => tick + 1)
+      setPending(null)
+      return
+    }
+    for (const patch of result.patches) {
+      if (patch.type === 'update') {
+        await data.updateLine(patch.id, {
+          ...(patch.pgn ? { pgn: patch.pgn } : {}),
+          ...(patch.included === undefined ? {} : { included: patch.included }),
+        })
+      } else {
+        await data.saveDrafts(active.id, [
+          {
+            id: 'new',
+            name: patch.name,
+            groupName: patch.groupName,
+            pgn: patch.pgn,
+            included: patch.included,
+            yourChoice: false,
+          },
+        ])
+      }
+    }
+    setPath(result.path)
+    setMoveText('')
+    setMessage('')
+    setPending(null)
+  }
+
+  function onMove(from: string, to: string, promotion?: string) {
+    const result = interpretMove(fen, from, to, promotion)
+    if (!result) return
+    if ('promotion' in result) {
+      setPending({ from, to })
+      return
+    }
+    void commit(result.san)
   }
 
   return (
@@ -48,107 +129,145 @@ export function Opening({ id }: { id: string }) {
       <label>
         <span>Opening</span>
         <input
-          defaultValue={opening.name}
-          key={opening.updatedAt}
+          defaultValue={active.name}
+          key={active.updatedAt}
           onBlur={(event) => {
             const name = event.target.value.trim()
-            if (name && name !== opening.name) void data.updateOpening(opening.id, { name })
+            if (name && name !== active.name) void data.updateOpening(active.id, { name })
           }}
         />
       </label>
-      <p className="quiet">{opening.myColor === 'white' ? 'You play White.' : 'You play Black.'}</p>
-      {conflicts.map((conflict) => (
-        <div className="callout" key={conflict.key}>
-          <p>Two lines disagree on your move. Pick the one to practice. The other moves to Later.</p>
-          <div className="stack">
-            {conflict.options.map((option) => (
+      <p className="quiet">{active.myColor === 'white' ? 'You play White.' : 'You play Black.'}</p>
+      <div className="stage">
+        <Board
+          fen={fen}
+          orientation={active.myColor}
+          interactive={!pending}
+          epoch={epoch}
+          lastMove={played.lastMove}
+          onMove={(from, to) => onMove(from, to)}
+        />
+        <div className="panel stack">
+          <p className="prompt">{notation || 'Starting position'}</p>
+          <p className="quiet">
+            {yours
+              ? 'Your move. Add the one reply you want to practice.'
+              : `${actor} to move. Add a try, or pick one in the tree.`}
+          </p>
+          {lines.length === 0 ? (
+            <p className="quiet">Play the first move on the board to start a line.</p>
+          ) : through.length > 0 ? (
+            <p className="quiet">
+              {learningCount} of {through.length} learning
+              {through.length <= 4 ? ` · ${through.map((line) => line.name).join(', ')}` : ''}
+            </p>
+          ) : null}
+          {message ? <p className="note">{message}</p> : null}
+          {pending ? <PromotionPicker onPick={(piece) => onMove(pending.from, pending.to, piece)} /> : null}
+          {through.length > 0 ? (
+            <div className="segment" role="group" aria-label="Learning">
               <button
-                key={`${option.lineId}-${option.san}`}
-                className="btn choice"
                 type="button"
-                onClick={() => void data.setLineLearning(opening.id, option.lineId, true, opening.myColor)}
+                className="btn secondary"
+                aria-pressed={learningCount === through.length}
+                onClick={() => void setLearning(true)}
               >
-                <span>{option.lineName}</span>
-                <strong>{option.san}</strong>
+                Learning
               </button>
-            ))}
+              <button
+                type="button"
+                className="btn secondary"
+                aria-pressed={learningCount === 0}
+                onClick={() => void setLearning(false)}
+              >
+                Later
+              </button>
+            </div>
+          ) : null}
+          {only ? (
+            <label>
+              <span>Line</span>
+              <input
+                key={`${only.id}-${only.updatedAt}`}
+                defaultValue={only.name}
+                onBlur={(event) => void rename(only, event.target.value)}
+              />
+            </label>
+          ) : null}
+          <form
+            className="add-move"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void commit(moveText)
+            }}
+          >
+            <input
+              aria-label="Add a move"
+              value={moveText}
+              placeholder="Nf3"
+              onChange={(event) => setMoveText(event.target.value)}
+            />
+            <button className="btn secondary" type="submit">
+              Add
+            </button>
+          </form>
+          <div className="tree-scroll">
+            <button
+              type="button"
+              className={path.length === 0 ? 'tree-row current' : 'tree-row'}
+              onClick={() => {
+                setPath([])
+                setMessage('')
+              }}
+            >
+              <span className="tree-san">Start</span>
+            </button>
+            {tree.moves.length > 0 ? (
+              <ul className="tree" role="tree">
+                <TreeRows
+                  nodes={tree.moves}
+                  depth={0}
+                  selected={path}
+                  onPick={(next) => {
+                    setPath(next)
+                    setMessage('')
+                    setPending(null)
+                  }}
+                />
+              </ul>
+            ) : null}
           </div>
+          {only ? (
+            <button
+              className="btn warn"
+              type="button"
+              onClick={() => {
+                if (confirm === only.id) {
+                  void data.deleteLine(only.id)
+                  setConfirm(null)
+                  setPath([])
+                } else setConfirm(only.id)
+              }}
+            >
+              {confirm === only.id ? 'Confirm remove' : `Remove ${only.name}`}
+            </button>
+          ) : null}
         </div>
-      ))}
-      {lines.length === 0 ? (
-        <p className="lede">Add a line by pasting PGN, fetching a Lichess study, or playing the moves.</p>
-      ) : null}
-      {[...groups.entries()].map(([group, groupLines]) => (
-        <section className="stack" key={group}>
-          <h2 className="group-title">{group}</h2>
-          {groupLines.map((line) => (
-            <article className="card stack" key={line.id}>
-              <label>
-                <span>Line</span>
-                <input
-                  defaultValue={line.name}
-                  onBlur={(event) => void rename(line, event.target.value, line.groupName)}
-                />
-              </label>
-              <label>
-                <span>Group</span>
-                <input
-                  defaultValue={line.groupName}
-                  onBlur={(event) => void rename(line, line.name, event.target.value)}
-                />
-              </label>
-              <div className="segment">
-                <button
-                  type="button"
-                  className="btn secondary"
-                  aria-pressed={line.included}
-                  onClick={() => void data.setLineLearning(opening.id, line.id, true, opening.myColor)}
-                >
-                  Learning
-                </button>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  aria-pressed={!line.included}
-                  onClick={() => void data.setLineLearning(opening.id, line.id, false, opening.myColor)}
-                >
-                  Later
-                </button>
-              </div>
-              <div className="actions two">
-                <button className="btn secondary" type="button" onClick={() => go(`/o/${opening.id}/study/${line.id}`)}>
-                  Study
-                </button>
-                <button className="btn secondary" type="button" onClick={() => go(`/o/${opening.id}/practice/${line.id}`)}>
-                  Practice
-                </button>
-              </div>
-              <button
-                className="btn warn"
-                type="button"
-                onClick={() => {
-                  if (confirm === line.id) void data.deleteLine(line.id)
-                  else setConfirm(line.id)
-                }}
-              >
-                {confirm === line.id ? 'Confirm remove' : 'Remove'}
-              </button>
-            </article>
-          ))}
-        </section>
-      ))}
+      </div>
       <button
         className="btn primary"
         type="button"
-        disabled={learning.length === 0 || conflicts.length > 0}
-        onClick={() => go(`/o/${opening.id}/practice`)}
+        disabled={lines.every((line) => !line.included)}
+        onClick={() => go(`/o/${active.id}/practice`)}
       >
         Practice what I’m learning
       </button>
-      <button className="btn secondary" type="button" onClick={() => go(`/o/${opening.id}/study`)}>
-        Study what I’m learning
-      </button>
-      <button className="btn secondary" type="button" onClick={() => go(`/o/${opening.id}/add`)}>
+      {only ? (
+        <button className="btn secondary" type="button" onClick={() => go(`/o/${active.id}/practice/${only.id}`)}>
+          Practice this line
+        </button>
+      ) : null}
+      <button className="btn secondary" type="button" onClick={() => go(`/o/${active.id}/add`)}>
         Add a line
       </button>
       <button
@@ -156,12 +275,75 @@ export function Opening({ id }: { id: string }) {
         type="button"
         onClick={() => {
           if (confirm === 'opening') {
-            void data.deleteOpening(opening.id).then(() => go('/'))
+            void data.deleteOpening(active.id).then(() => go('/'))
           } else setConfirm('opening')
         }}
       >
         {confirm === 'opening' ? 'Confirm remove opening' : 'Remove opening'}
       </button>
     </div>
+  )
+}
+
+function replayPath(startFen: string, path: string[]) {
+  let fen = startFen
+  let lastMove: [string, string] | undefined
+  for (const san of path) {
+    const squares = moveSquares(fen, san)
+    const applied = applySan(fen, san)
+    if (!applied) return { fen: startFen, lastMove: undefined, ok: false }
+    fen = applied.fen
+    lastMove = squares ? [squares.from, squares.to] : undefined
+  }
+  return { fen, lastMove, ok: true }
+}
+
+function TreeRows({
+  nodes,
+  depth,
+  selected,
+  onPick,
+}: {
+  nodes: TreeMove[]
+  depth: number
+  selected: string[]
+  onPick: (path: string[]) => void
+}) {
+  return (
+    <>
+      {nodes.map((node) => {
+        const current = node.path.length === selected.length && node.path.every((san, index) => san === selected[index])
+        const onPath = node.path.every((san, index) => san === selected[index])
+        const aside = node.learningCount === 0
+        return (
+          <li key={node.key} role="none">
+            <button
+              type="button"
+              role="treeitem"
+              aria-selected={current}
+              className={current ? 'tree-row current' : onPath ? 'tree-row on-path' : aside ? 'tree-row later' : 'tree-row'}
+              style={{ paddingLeft: 8 + depth * 18 }}
+              onClick={() => onPick(node.path)}
+            >
+              <span className="tree-san">{node.moveLabel}</span>
+              {node.you ? <span className="tree-you">you</span> : null}
+              {node.badge ? <span className="tree-label">{node.badge}</span> : null}
+              {node.note ? <span className="tree-label">{node.note}</span> : null}
+              {aside ? <span className="tree-label">Later</span> : null}
+              {node.learningCount > 0 && node.learningCount < node.lineIds.length ? (
+                <span className="tree-label">
+                  {node.learningCount}/{node.lineIds.length}
+                </span>
+              ) : null}
+            </button>
+            {node.children.length > 0 ? (
+              <ul className="tree" role="group">
+                <TreeRows nodes={node.children} depth={depth + 1} selected={selected} onPick={onPick} />
+              </ul>
+            ) : null}
+          </li>
+        )
+      })}
+    </>
   )
 }
