@@ -199,21 +199,49 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
 
 .tree-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
   width: 100%;
   min-height: 44px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   text-align: left;
-  padding: 6px 8px;
+  padding: 2px 4px 2px 0;
 }
 
 .tree-row.current { background: #e7f5ef; }
 .tree-row.on-path { background: #f7f1e7; }
 .tree-row.later { color: var(--muted); }
+.tree-twist {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+}
+button.tree-twist:hover { background: rgba(14, 107, 82, 0.08); color: var(--ink); }
+.tree-pick {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 6px 8px;
+}
 .tree-san { font-weight: 700; }
 .tree-you {
   color: var(--accent-deep);

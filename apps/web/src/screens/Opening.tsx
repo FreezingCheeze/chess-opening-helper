@@ -21,6 +21,8 @@ export function Opening({ id }: { id: string }) {
   const [opening, setOpening] = useState<OpeningRecord | null | undefined>(undefined)
   const [lines, setLines] = useState<LineRecord[]>([])
   const [path, setPath] = useState<string[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [opened, setOpened] = useState(false)
   const [moveText, setMoveText] = useState('')
   const [message, setMessage] = useState('')
   const [pending, setPending] = useState<{ from: string; to: string } | null>(null)
@@ -29,6 +31,9 @@ export function Opening({ id }: { id: string }) {
 
   useEffect(() => {
     let cancel = false
+    setOpened(false)
+    setExpanded(new Set())
+    setPath([])
     void (async () => {
       const found = await data.getOpening(id)
       const stored = found ? await data.listLines(id) : []
@@ -42,11 +47,18 @@ export function Opening({ id }: { id: string }) {
     }
   }, [data, id])
 
+  const tree = opening ? repertoireOf(lines, opening.myColor) : { fen: '', moves: [] as TreeMove[] }
+
+  useEffect(() => {
+    if (!opening || opened || tree.moves.length === 0) return
+    setExpanded(defaultExpanded(tree.moves))
+    setOpened(true)
+  }, [opened, opening, lines])
+
   if (opening === undefined) return <p>Loading…</p>
   if (!opening) return <p>That opening is not on this device.</p>
 
   const active = opening
-  const tree = repertoireOf(lines, active.myColor)
   const selected = path.length ? findMove(tree, path) : null
   const played = replayPath(tree.fen, path)
   const fen = played.fen
@@ -60,6 +72,33 @@ export function Opening({ id }: { id: string }) {
   const learningCount = through.filter((line) => line.included).length
   const only = through.length === 1 ? through[0] : null
   const notation = pathNotation(tree.fen, played.ok ? path : [])
+
+  function revealPath(next: string[]) {
+    setExpanded((current) => withPathExpanded(tree.moves, next, current))
+  }
+
+  function pickPath(next: string[]) {
+    setPath(next)
+    setMessage('')
+    setPending(null)
+    if (next.length === 0) return
+    revealPath(next)
+  }
+
+  function toggleExpanded(key: string, nodePath: string[]) {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+        if (path.length > nodePath.length && nodePath.every((san, index) => san === path[index])) {
+          setPath(nodePath)
+        }
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
 
   async function rename(line: LineRecord, name: string) {
     const next = name.trim()
@@ -108,6 +147,7 @@ export function Opening({ id }: { id: string }) {
       }
     }
     setPath(result.path)
+    revealPath(result.path)
     setMoveText('')
     setMessage('')
     setPending(null)
@@ -215,11 +255,9 @@ export function Opening({ id }: { id: string }) {
             <button
               type="button"
               className={path.length === 0 ? 'tree-row current' : 'tree-row'}
-              onClick={() => {
-                setPath([])
-                setMessage('')
-              }}
+              onClick={() => pickPath([])}
             >
+              <span className="tree-twist" aria-hidden="true" />
               <span className="tree-san">Start</span>
             </button>
             {tree.moves.length > 0 ? (
@@ -228,11 +266,9 @@ export function Opening({ id }: { id: string }) {
                   nodes={tree.moves}
                   depth={0}
                   selected={path}
-                  onPick={(next) => {
-                    setPath(next)
-                    setMessage('')
-                    setPending(null)
-                  }}
+                  expanded={expanded}
+                  onPick={pickPath}
+                  onToggle={toggleExpanded}
                 />
               </ul>
             ) : null}
@@ -298,16 +334,42 @@ function replayPath(startFen: string, path: string[]) {
   return { fen, lastMove, ok: true }
 }
 
+function defaultExpanded(moves: TreeMove[]): Set<string> {
+  const open = new Set<string>()
+  let nodes = moves
+  while (nodes.length === 1) {
+    open.add(nodes[0].key)
+    nodes = nodes[0].children
+  }
+  return open
+}
+
+function withPathExpanded(moves: TreeMove[], path: string[], current: Set<string>): Set<string> {
+  const next = new Set(current)
+  let nodes = moves
+  for (const san of path) {
+    const node = nodes.find((item) => item.san === san)
+    if (!node) break
+    next.add(node.key)
+    nodes = node.children
+  }
+  return next
+}
+
 function TreeRows({
   nodes,
   depth,
   selected,
+  expanded,
   onPick,
+  onToggle,
 }: {
   nodes: TreeMove[]
   depth: number
   selected: string[]
+  expanded: Set<string>
   onPick: (path: string[]) => void
+  onToggle: (key: string, path: string[]) => void
 }) {
   return (
     <>
@@ -315,30 +377,56 @@ function TreeRows({
         const current = node.path.length === selected.length && node.path.every((san, index) => san === selected[index])
         const onPath = node.path.every((san, index) => san === selected[index])
         const aside = node.learningCount === 0
+        const hasChildren = node.children.length > 0
+        const open = hasChildren && expanded.has(node.key)
         return (
           <li key={node.key} role="none">
-            <button
-              type="button"
-              role="treeitem"
-              aria-selected={current}
+            <div
               className={current ? 'tree-row current' : onPath ? 'tree-row on-path' : aside ? 'tree-row later' : 'tree-row'}
               style={{ paddingLeft: 8 + depth * 18 }}
-              onClick={() => onPick(node.path)}
             >
-              <span className="tree-san">{node.moveLabel}</span>
-              {node.you ? <span className="tree-you">you</span> : null}
-              {node.badge ? <span className="tree-label">{node.badge}</span> : null}
-              {node.note ? <span className="tree-label">{node.note}</span> : null}
-              {aside ? <span className="tree-label">Later</span> : null}
-              {node.learningCount > 0 && node.learningCount < node.lineIds.length ? (
-                <span className="tree-label">
-                  {node.learningCount}/{node.lineIds.length}
-                </span>
-              ) : null}
-            </button>
-            {node.children.length > 0 ? (
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className="tree-twist"
+                  aria-label={open ? `Hide moves after ${node.moveLabel}` : `Show moves after ${node.moveLabel}`}
+                  aria-expanded={open}
+                  onClick={() => onToggle(node.key, node.path)}
+                >
+                  {open ? '▾' : '▸'}
+                </button>
+              ) : (
+                <span className="tree-twist" aria-hidden="true" />
+              )}
+              <button
+                type="button"
+                role="treeitem"
+                aria-selected={current}
+                className="tree-pick"
+                onClick={() => onPick(node.path)}
+              >
+                <span className="tree-san">{node.moveLabel}</span>
+                {node.you ? <span className="tree-you">you</span> : null}
+                {node.badge ? <span className="tree-label">{node.badge}</span> : null}
+                {node.note ? <span className="tree-label">{node.note}</span> : null}
+                {aside ? <span className="tree-label">Later</span> : null}
+                {node.learningCount > 0 && node.learningCount < node.lineIds.length ? (
+                  <span className="tree-label">
+                    {node.learningCount}/{node.lineIds.length}
+                  </span>
+                ) : null}
+              </button>
+            </div>
+            {open ? (
               <ul className="tree" role="group">
-                <TreeRows nodes={node.children} depth={depth + 1} selected={selected} onPick={onPick} />
+                <TreeRows
+                  nodes={node.children}
+                  depth={depth + 1}
+                  selected={selected}
+                  expanded={expanded}
+                  onPick={onPick}
+                  onToggle={onToggle}
+                />
               </ul>
             ) : null}
           </li>
