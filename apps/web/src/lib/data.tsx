@@ -1,4 +1,4 @@
-import { chooseLearning, type DraftLine, type SessionEvent } from '@opening/engine'
+import { chooseLearning, type BranchPrefs, type DraftLine, type SessionEvent } from '@opening/engine'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   allRows,
@@ -44,7 +44,8 @@ type DataApi = {
     patch: Partial<Pick<LineRecord, 'name' | 'groupName' | 'included' | 'pgn' | 'sortOrder'>>,
   ) => Promise<void>
   setLineLearning: (openingId: string, lineId: string, included: boolean, myColor: 'white' | 'black') => Promise<void>
-  setMainLine: (openingId: string, lineId: string) => Promise<void>
+  getBranchPrefs: (openingId: string) => Promise<BranchPrefs>
+  saveBranchPrefs: (openingId: string, prefs: BranchPrefs) => Promise<void>
   deleteLine: (id: string) => Promise<void>
   listProgress: (openingId: string) => Promise<ProgressRecord[]>
   applyEvents: (openingId: string, events: SessionEvent[]) => Promise<void>
@@ -390,13 +391,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (original && original.included !== draft.included) await this.updateLine(draft.id, { included: draft.included })
         }
       },
-      async setMainLine(openingId, lineId) {
-        const lines = await this.listLines(openingId)
-        const target = lines.find((line) => line.id === lineId)
-        if (!target) return
-        const lowest = lines.reduce((min, line) => Math.min(min, line.sortOrder), target.sortOrder)
-        if (target.sortOrder <= lowest && lines[0]?.id === lineId) return
-        await this.updateLine(lineId, { sortOrder: lowest - 1 })
+      async getBranchPrefs(openingId) {
+        const current = requireUser()
+        return (await getMeta<BranchPrefs>(`branchPrefs:${current.id}:${openingId}`)) ?? {}
+      },
+      async saveBranchPrefs(openingId, prefs) {
+        const current = requireUser()
+        await setMeta(`branchPrefs:${current.id}:${openingId}`, prefs)
       },
       async deleteLine(id) {
         const current = requireUser()

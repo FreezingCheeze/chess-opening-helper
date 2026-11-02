@@ -36,6 +36,7 @@ import {
   START_FEN,
   studyView,
   undoEditor,
+  withPreferredMove,
 } from '../src/index'
 
 const caro = `
@@ -279,8 +280,8 @@ describe('repertoire tree', () => {
     expect(d5?.children.map((move) => move.san)).toEqual(['Nc3', 'exd5', 'f3'])
     const classical = d5?.children.find((move) => move.san === 'Nc3')
     const exchange = d5?.children.find((move) => move.san === 'exd5')
-    expect(classical?.main).toBe(true)
-    expect(exchange?.main).toBe(false)
+    expect(classical?.preferred).toBe(true)
+    expect(exchange?.preferred).toBe(false)
     expect(classical?.badge).toBe('Classical')
     expect(classical?.learningCount).toBe(1)
     expect(exchange?.badge).toBe('Exchange')
@@ -290,13 +291,14 @@ describe('repertoire tree', () => {
     expect(pathNotation(tree.fen, ['e4', 'c6', 'd4', 'd5', 'Nc3'])).toBe('1. e4 c6 2. d4 d5 3. Nc3')
   })
 
-  it('keeps the first line as the main continuation at every branch', () => {
-    const drafts = lines()
-    const fantasyFirst = [...drafts].sort((left, right) => Number(left.name !== 'Fantasy') - Number(right.name !== 'Fantasy'))
-    const tree = repertoireOf(fantasyFirst, 'black')
+  it('lets you prefer a move at one fork without reordering other branches', () => {
+    const tree = repertoireOf(lines(), 'black', withPreferredMove({}, ['e4', 'c6', 'd4', 'd5'], 'f3'))
     const d5 = findMove(tree, ['e4', 'c6', 'd4', 'd5'])
     expect(d5?.children.map((move) => move.san)).toEqual(['f3', 'Nc3', 'exd5'])
-    expect(d5?.children[0]?.main).toBe(true)
+    expect(d5?.children[0]?.preferred).toBe(true)
+    expect(d5?.children[0]?.badge).toBe('Fantasy')
+    const classical = findMove(tree, ['e4', 'c6', 'd4', 'd5', 'Nc3'])
+    expect(classical?.children.map((move) => move.san)).toEqual(['dxe4'])
     expect(mainPathFrom(tree).slice(0, 6)).toEqual(['e4', 'c6', 'd4', 'd5', 'f3', 'dxe4'])
     expect(pathPrefix(['e4', 'c6'], mainPathFrom(tree))).toBe(true)
   })

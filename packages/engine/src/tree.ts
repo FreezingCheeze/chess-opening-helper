@@ -11,7 +11,8 @@ export type TreeMove = {
   fen: string
   moveLabel: string
   you: boolean
-  main: boolean
+  /** Top choice among siblings at this fork only. */
+  preferred: boolean
   badge?: string
   note?: string
   lineIds: string[]
@@ -23,6 +24,22 @@ export type TreeMove = {
 export type Repertoire = {
   fen: string
   moves: TreeMove[]
+}
+
+/** Parent path key → SAN that should sort first at that fork. */
+export type BranchPrefs = Record<string, string>
+
+export function branchParentKey(path: string[]): string {
+  return path.join('|')
+}
+
+export function withPreferredMove(prefs: BranchPrefs, parentPath: string[], san: string): BranchPrefs {
+  return { ...prefs, [branchParentKey(parentPath)]: san }
+}
+
+function preferOrder(order: string[], preferred?: string): string[] {
+  if (!preferred || !order.includes(preferred)) return order
+  return [preferred, ...order.filter((san) => san !== preferred)]
 }
 
 export type LinePatch =
@@ -52,7 +69,7 @@ function divergenceIndex(moves: string[], others: string[][]): number {
   return Math.max(0, moves.length - 1)
 }
 
-export function repertoireOf(lines: StoredLine[], myColor: Color): Repertoire {
+export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchPrefs = {}): Repertoire {
   const played: Played[] = []
   for (const line of lines) {
     for (const path of allPaths(line.pgn)) played.push({ line, moves: path.moves })
@@ -81,7 +98,8 @@ export function repertoireOf(lines: StoredLine[], myColor: Color): Repertoire {
       if (!order.includes(step.san)) order.push(step.san)
       if (step.comment && !comments.has(step.san)) comments.set(step.san, step.comment)
     }
-    return order.map((san, index) => {
+    const ordered = preferOrder(order, prefs[branchParentKey(prefix)])
+    return ordered.map((san, index) => {
       const applied = applySan(fen, san)
       const nextFen = applied?.fen ?? fen
       const path = [...prefix, san]
@@ -100,7 +118,7 @@ export function repertoireOf(lines: StoredLine[], myColor: Color): Repertoire {
         fen: nextFen,
         moveLabel: moveLabel(startFen, prefix.length, san),
         you: sideToMove(fen) === myColor,
-        main: order.length > 1 && index === 0,
+        preferred: ordered.length > 1 && index === 0,
         badge: badge && badge !== san ? badge : undefined,
         note: note && note !== badge && note !== san ? note : undefined,
         lineIds,
@@ -125,7 +143,7 @@ export function findMove(tree: Repertoire, path: string[]): TreeMove | null {
   return found
 }
 
-/** Follow the first (main) child from `prefix` to a leaf. */
+/** Follow the preferred (first) child from `prefix` to a leaf. */
 export function mainPathFrom(tree: Repertoire, prefix: string[] = []): string[] {
   const path = [...prefix]
   let children = prefix.length === 0 ? tree.moves : findMove(tree, prefix)?.children

@@ -10,6 +10,8 @@ import {
   pathPrefix,
   repertoireOf,
   sideToMove,
+  withPreferredMove,
+  type BranchPrefs,
   type TreeMove,
 } from '@opening/engine'
 import { useEffect, useRef, useState } from 'react'
@@ -25,6 +27,7 @@ export function Opening({ id }: { id: string }) {
   dataRef.current = data
   const [opening, setOpening] = useState<OpeningRecord | null | undefined>(undefined)
   const [lines, setLines] = useState<LineRecord[]>([])
+  const [prefs, setPrefs] = useState<BranchPrefs>({})
   const [path, setPath] = useState<string[]>([])
   const [shown, setShown] = useState<string[]>([])
   const [trail, setTrail] = useState<string[]>([])
@@ -42,6 +45,7 @@ export function Opening({ id }: { id: string }) {
     setPath([])
     setShown([])
     setTrail([])
+    setPrefs({})
     setPending(null)
     setMessage('')
     setConfirm(null)
@@ -55,9 +59,11 @@ export function Opening({ id }: { id: string }) {
       const api = dataRef.current
       const found = await api.getOpening(id)
       const stored = found ? await api.listLines(id) : []
+      const storedPrefs = found ? await api.getBranchPrefs(id) : {}
       if (!cancel) {
         setOpening(found ?? null)
         setLines(stored)
+        setPrefs(storedPrefs)
       }
     })()
     return () => {
@@ -65,7 +71,7 @@ export function Opening({ id }: { id: string }) {
     }
   }, [id, data.user?.id, data.revision])
 
-  const tree = opening ? repertoireOf(lines, opening.myColor) : { fen: '', moves: [] as TreeMove[] }
+  const tree = opening ? repertoireOf(lines, opening.myColor, prefs) : { fen: '', moves: [] as TreeMove[] }
 
   useEffect(() => {
     if (!opening || opened || tree.moves.length === 0) return
@@ -150,7 +156,9 @@ export function Opening({ id }: { id: string }) {
   const trackedNode = remembered.length > 0 ? findMove(tree, remembered) : null
   const tracked =
     (trackedNode?.lineIds[0] ? lines.find((line) => line.id === trackedNode.lineIds[0]) : null) ?? lines[0] ?? null
-  const mainLine = lines[0] ?? null
+  const parentPath = path.slice(0, -1)
+  const siblings = path.length === 0 ? [] : parentPath.length === 0 ? tree.moves : (findMove(tree, parentPath)?.children ?? [])
+  const canPrefer = Boolean(selected && siblings.length > 1 && !selected.preferred)
   const canBack = shown.length > 0
   const canForward =
     (pathPrefix(shown, remembered) && shown.length < remembered.length) ||
@@ -332,9 +340,11 @@ export function Opening({ id }: { id: string }) {
     setPending(null)
   }
 
-  async function makeMainLine() {
-    if (!only) return
-    await data.setMainLine(active.id, only.id)
+  async function preferSelected() {
+    if (!selected || !canPrefer) return
+    const next = withPreferredMove(prefs, parentPath, selected.san)
+    setPrefs(next)
+    await data.saveBranchPrefs(active.id, next)
   }
 
   function onMove(from: string, to: string, promotion?: string) {
@@ -446,11 +456,11 @@ export function Opening({ id }: { id: string }) {
           <button
             type="button"
             className="btn secondary"
-            disabled={!only || only.id === mainLine?.id}
-            aria-pressed={Boolean(only && only.id === mainLine?.id)}
-            onClick={() => void makeMainLine()}
+            disabled={!canPrefer}
+            aria-pressed={Boolean(selected && siblings.length > 1 && selected.preferred)}
+            onClick={() => void preferSelected()}
           >
-            Set as main line
+            Prefer this move
           </button>
           <form
             className="add-move"
@@ -693,7 +703,7 @@ function TreeRows({
               >
                 <span className="tree-san">{node.moveLabel}</span>
                 {node.you ? <span className="tree-you">you</span> : null}
-                {node.main ? <span className="tree-you">main</span> : null}
+                {node.preferred ? <span className="tree-you">preferred</span> : null}
                 {node.badge ? <span className="tree-label">{node.badge}</span> : null}
                 {node.note ? <span className="tree-label">{node.note}</span> : null}
                 {aside ? <span className="tree-label">Later</span> : null}
