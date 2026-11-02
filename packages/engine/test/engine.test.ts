@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   addRepertoireMove,
   answer,
+  applySan,
+  caroKannLines,
+  repertoireAdjustments,
   beginReplay,
   chooseLearning,
   compile,
@@ -26,6 +29,8 @@ import {
   rewindForOpponentTry,
   sessionView,
   showMove,
+  sideToMove,
+  START_FEN,
   studyView,
   undoEditor,
 } from '../src/index'
@@ -321,6 +326,47 @@ describe('repertoire tree', () => {
     if ('error' in result) throw new Error(result.error)
     expect(result.patches).toContainEqual({ type: 'update', id: classical.id, included: false })
     expect(result.patches).toContainEqual(expect.objectContaining({ type: 'create', name: 'Be6', included: true }))
+  })
+})
+
+describe('Caro-Kann repertoire', () => {
+  it('keeps a single black reply at every position', () => {
+    const replies = new Map<string, string>()
+    const groups = new Set<string>()
+    for (const line of caroKannLines) {
+      groups.add(line.groupName)
+      let fen = START_FEN
+      for (const san of line.moves) {
+        if (sideToMove(fen) === 'black') {
+          const key = fen.split(' ').slice(0, 4).join(' ')
+          const previous = replies.get(key)
+          expect(previous ?? san).toBe(san)
+          replies.set(key, san)
+        }
+        const applied = applySan(fen, san)
+        expect(applied, `${line.slug} ${san}`).not.toBeNull()
+        fen = applied!.fen
+      }
+      expect(sideToMove(fen)).toBe('white')
+    }
+    expect(groups).toEqual(new Set(['Classical', 'Advance', 'Exchange', 'Fantasy']))
+    expect(replies.size).toBeGreaterThan(20)
+  })
+
+  it('replaces a short line and sets a different black reply aside', () => {
+    const short = '1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Bf5 *'
+    const sharp = '1. e4 c6 2. d4 d5 3. f3 dxe4 *'
+    const result = repertoireAdjustments(
+      [
+        { id: 'short', pgn: short, included: true },
+        { id: 'sharp', pgn: sharp, included: true },
+        { id: 'kept', pgn: '1. d4 d5 *', included: true },
+      ],
+      caroKannLines,
+    )
+    expect(result.deleteIds).toEqual(['short'])
+    expect(result.laterIds).toEqual(['sharp'])
+    expect(result.deleteIds).not.toContain('kept')
   })
 })
 

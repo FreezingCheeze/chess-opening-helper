@@ -21,7 +21,7 @@ export function Library() {
     <div className="stack">
       <h1>Your openings</h1>
       {openings.length === 0 ? (
-        <p className="lede">Add an opening, then bring in a few lines to learn. Nothing is loaded for you.</p>
+        <p className="lede">Add an opening, then bring in a few lines to learn.</p>
       ) : null}
       {openings.map((opening) => (
         <button key={opening.id} className="card btn choice" type="button" onClick={() => go(`/o/${opening.id}`)}>

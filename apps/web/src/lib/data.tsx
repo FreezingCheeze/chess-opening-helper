@@ -14,6 +14,7 @@ import {
   type Tombstone,
 } from './db'
 import { supabase, supabaseConfigured } from './supabase'
+import { seedCaroKann } from './seed'
 import { explainSyncError, syncAccount } from './sync'
 
 export type Account = { id: string; email: string }
@@ -151,6 +152,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const session = data.session
         if (!ignore && session?.user) {
           const account = { id: session.user.id, email: session.user.email ?? '' }
+          await seedCaroKann(account.id).catch(() => false)
           setUser(account)
           userRef.current = account
           await syncAccount(account.id).catch((error: unknown) => {
@@ -160,7 +162,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       } else {
         const saved = await getMeta<Account & { mode: 'local' }>('session')
-        if (!ignore && saved?.mode === 'local') setUser({ id: saved.id, email: saved.email })
+        if (!ignore && saved?.mode === 'local') {
+          await seedCaroKann(saved.id).catch(() => false)
+          setUser({ id: saved.id, email: saved.email })
+        }
       }
       if (!ignore) setReady(true)
     }
@@ -168,8 +173,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const subscription = supabase?.auth.onAuthStateChange((_event, session) => {
       if (!session?.user) return
       const account = { id: session.user.id, email: session.user.email ?? '' }
-      setUser(account)
-      userRef.current = account
+      void seedCaroKann(account.id).finally(() => {
+        setUser(account)
+        userRef.current = account
+      })
     })
     const onOnline = () => {
       setOnline(true)
@@ -212,6 +219,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (error || !data.user) throw new DataError(friendlyAuth(error ?? { message: 'Could not sign in.' }))
           const account = { id: data.user.id, email: data.user.email ?? address }
           await adoptLocalRows(address, account.id)
+          await seedCaroKann(account.id)
           setUser(account)
           userRef.current = account
           await syncNow()
@@ -224,6 +232,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         const account = { id: found.id, email: found.email }
         await setMeta('session', { ...account, mode: 'local' })
+        await seedCaroKann(account.id)
         setUser(account)
         userRef.current = account
         setStatus('device')
@@ -240,6 +249,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
           const account = { id: data.user.id, email: data.user.email ?? address }
           await adoptLocalRows(address, account.id)
+          await seedCaroKann(account.id)
           setUser(account)
           userRef.current = account
           await syncNow()
@@ -260,6 +270,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         await putRow('users', accountUser)
         const account = { id: accountUser.id, email: address }
         await setMeta('session', { ...account, mode: 'local' })
+        await seedCaroKann(account.id)
         setUser(account)
         userRef.current = account
         setStatus('device')
