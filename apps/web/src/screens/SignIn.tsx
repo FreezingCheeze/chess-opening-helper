@@ -9,7 +9,7 @@ export function SignIn() {
   const [pending, setPending] = useState(false)
 
   async function submit(mode: 'in' | 'up') {
-    setError('')
+    setError('') // setting error
     setPending(true)
     try {
       if (mode === 'in') await data.signIn(email, password)
