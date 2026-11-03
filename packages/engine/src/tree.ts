@@ -10,7 +10,7 @@ export type TreeMove = {
   path: string[]
   fen: string
   moveLabel: string
-  you: boolean
+  color: Color
   /** Top choice among siblings at this fork only. */
   preferred: boolean
   badge?: string
@@ -28,6 +28,20 @@ export type Repertoire = {
 
 /** Parent path key → SAN that should sort first at that fork. */
 export type BranchPrefs = Record<string, string>
+
+const TITLE_PREFIX = '@title:'
+
+export function nodeTitleKey(path: string[]): string {
+  return `${TITLE_PREFIX}${JSON.stringify(path)}`
+}
+
+export function nodeTitlesFrom(prefs: BranchPrefs): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(prefs)
+      .filter(([key]) => key.startsWith(TITLE_PREFIX))
+      .map(([key, value]) => [key.slice(TITLE_PREFIX.length), value]),
+  )
+}
 
 export function branchParentKey(path: string[]): string {
   return path.join('|')
@@ -69,7 +83,7 @@ function divergenceIndex(moves: string[], others: string[][]): number {
   return Math.max(0, moves.length - 1)
 }
 
-export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchPrefs = {}): Repertoire {
+export function repertoireOf(lines: StoredLine[], _myColor: Color, prefs: BranchPrefs = {}): Repertoire {
   const played: Played[] = []
   for (const line of lines) {
     for (const path of allPaths(line.pgn)) played.push({ line, moves: path.moves })
@@ -98,8 +112,9 @@ export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchP
       if (!order.includes(step.san)) order.push(step.san)
       if (step.comment && !comments.has(step.san)) comments.set(step.san, step.comment)
     }
-    const ordered = preferOrder(order, prefs[branchParentKey(prefix)])
-    return ordered.map((san, index) => {
+    const preferredSan = prefs[branchParentKey(prefix)]
+    const ordered = preferOrder(order, preferredSan)
+    const nodes: TreeMove[] = ordered.map((san) => {
       const applied = applySan(fen, san)
       const nextFen = applied?.fen ?? fen
       const path = [...prefix, san]
@@ -109,7 +124,10 @@ export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchP
       const lineIds = [...new Set(through.map((item) => item.line.id))]
       const learningCount = lineIds.filter((id) => lines.some((line) => line.id === id && line.included)).length
       const squares = applied ? moveSquares(fen, san) : null
-      const badge = badges.get(path.join('|')) || undefined
+      const titleKey = nodeTitleKey(path)
+      const badge = Object.prototype.hasOwnProperty.call(prefs, titleKey)
+        ? prefs[titleKey].trim() || undefined
+        : badges.get(path.join('|')) || undefined
       const note = comments.get(san)
       return {
         key: path.join('|'),
@@ -117,8 +135,8 @@ export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchP
         path,
         fen: nextFen,
         moveLabel: moveLabel(startFen, prefix.length, san),
-        you: sideToMove(fen) === myColor,
-        preferred: ordered.length > 1 && index === 0,
+        color: sideToMove(fen),
+        preferred: ordered.length > 1 && san === preferredSan,
         badge: badge && badge !== san ? badge : undefined,
         note: note && note !== badge && note !== san ? note : undefined,
         lineIds,
@@ -126,6 +144,10 @@ export function repertoireOf(lines: StoredLine[], myColor: Color, prefs: BranchP
         lastMove: squares ? [squares.from, squares.to] : undefined,
         children: applied ? build(path, nextFen) : [],
       }
+    })
+    return nodes.sort((left, right) => {
+      const rank = (node: TreeMove) => (node.preferred ? 0 : node.learningCount === 0 ? 2 : 1)
+      return rank(left) - rank(right)
     })
   }
 

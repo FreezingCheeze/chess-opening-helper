@@ -1,8 +1,10 @@
 import { supabase } from './supabase'
+import type { BranchPrefs } from '@opening/engine'
 import {
   allRows,
   deleteRow,
   putRow,
+  type BranchPrefsRecord,
   type LineRecord,
   type OpeningRecord,
   type ProgressRecord,
@@ -39,6 +41,13 @@ type RemoteProgress = {
   expected_san: string
   introduced: boolean
   needs_review: boolean
+  updated_at: string
+}
+
+type RemoteBranchPrefs = {
+  user_id: string
+  opening_id: string
+  prefs: BranchPrefs
   updated_at: string
 }
 
@@ -123,6 +132,26 @@ function progressFromRemote(row: RemoteProgress): ProgressRecord {
   }
 }
 
+function branchPrefsToRemote(row: BranchPrefsRecord): RemoteBranchPrefs {
+  return {
+    user_id: row.userId,
+    opening_id: row.openingId,
+    prefs: row.prefs,
+    updated_at: row.updatedAt,
+  }
+}
+
+function branchPrefsFromRemote(row: RemoteBranchPrefs): BranchPrefsRecord {
+  return {
+    id: `${row.user_id}:${row.opening_id}`,
+    userId: row.user_id,
+    openingId: row.opening_id,
+    prefs: row.prefs,
+    updatedAt: row.updated_at,
+    dirty: false,
+  }
+}
+
 async function mergeRemote<T extends { id: string; updatedAt: string; dirty?: boolean; userId: string }>(
   store: string,
   remote: T[],
@@ -171,6 +200,17 @@ export async function syncAccount(userId: string): Promise<void> {
     await putRow('progress', { ...row, dirty: false })
   }
 
+  const branchPrefs = (await allRows<BranchPrefsRecord>('branchPrefs')).filter(
+    (row) => row.userId === userId && row.dirty,
+  )
+  for (const row of branchPrefs) {
+    const { error } = await client
+      .from('branch_prefs')
+      .upsert(branchPrefsToRemote(row), { onConflict: 'user_id,opening_id' })
+    if (error) throw error
+    await putRow('branchPrefs', { ...row, dirty: false })
+  }
+
   const remoteOpenings = await client.from('openings').select('*').eq('user_id', userId)
   if (remoteOpenings.error) throw remoteOpenings.error
   await mergeRemote('openings', ((remoteOpenings.data ?? []) as RemoteOpening[]).map(openingFromRemote), userId)
@@ -182,12 +222,28 @@ export async function syncAccount(userId: string): Promise<void> {
   const remoteProgress = await client.from('progress').select('*').eq('user_id', userId)
   if (remoteProgress.error) throw remoteProgress.error
   await mergeRemote('progress', ((remoteProgress.data ?? []) as RemoteProgress[]).map(progressFromRemote), userId)
+
+  const remoteBranchPrefs = await client.from('branch_prefs').select('*').eq('user_id', userId)
+  if (remoteBranchPrefs.error) throw remoteBranchPrefs.error
+  await mergeRemote(
+    'branchPrefs',
+    ((remoteBranchPrefs.data ?? []) as RemoteBranchPrefs[]).map(branchPrefsFromRemote),
+    userId,
+  )
 }
 
 export function explainSyncError(error: unknown): string {
-  const message = error instanceof Error ? error.message : 'Could not sync.'
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : 'Could not sync.'
+  if (/invalid input syntax for type uuid/i.test(message)) {
+    return 'Run 0003_line_text_ids.sql in the Supabase SQL editor, then try again.'
+  }
   if (/relation|schema cache|permission|row-level|42P01/i.test(message)) {
-    return 'Run supabase/migrations/0001_init.sql in the Supabase SQL editor, then try again.'
+    return 'On a new project, run 0001_init.sql, 0002_branch_prefs.sql, and 0003_line_text_ids.sql. If 0001 and 0002 are already applied, run only 0003_line_text_ids.sql.'
   }
   return message
 }

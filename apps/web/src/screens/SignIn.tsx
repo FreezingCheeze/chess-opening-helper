@@ -36,9 +36,10 @@ export function SignIn() {
       {!data.configured ? (
         <div className="callout">
           <p>
-            Lines stay on this device until you connect a free Supabase project. Put its URL and anon key in
-            the environment file, and run supabase/migrations/0001_init.sql in the SQL editor. Turn off email
-            confirmation so sign-in works immediately.
+            Add your Supabase project URL and anon key to the environment file. For a new project, run
+            0001_init.sql, 0002_branch_prefs.sql, and 0003_line_text_ids.sql; if 0001 and 0002 were already
+            applied, run only 0003_line_text_ids.sql. Turn off
+            email confirmation so sign-in works immediately.
           </p>
         </div>
       ) : null}

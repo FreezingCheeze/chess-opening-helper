@@ -1,4 +1,4 @@
-import { chooseLearning, type BranchPrefs, type DraftLine, type SessionEvent } from '@opening/engine'
+import { chooseLearning, type BranchPrefs, type SessionEvent } from '@opening/engine'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   allRows,
@@ -7,6 +7,7 @@ import {
   getMeta,
   putRow,
   setMeta,
+  type BranchPrefsRecord,
   type LineRecord,
   type LocalUser,
   type OpeningRecord,
@@ -28,7 +29,9 @@ type DataApi = {
   online: boolean
   status: Status
   statusDetail?: string
+  lastSyncedAt?: string
   revision: number
+  syncNow: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
@@ -38,7 +41,6 @@ type DataApi = {
   updateOpening: (id: string, patch: { name?: string }) => Promise<void>
   deleteOpening: (id: string) => Promise<void>
   listLines: (openingId: string) => Promise<LineRecord[]>
-  saveDrafts: (openingId: string, drafts: DraftLine[]) => Promise<void>
   updateLine: (
     id: string,
     patch: Partial<Pick<LineRecord, 'name' | 'groupName' | 'included' | 'pgn' | 'sortOrder'>>,
@@ -98,6 +100,18 @@ async function adoptLocalRows(email: string, remoteId: string): Promise<void> {
       if (row.userId === local.id) await putRow(store, { ...row, userId: remoteId, dirty: true, updatedAt: now() })
     }
   }
+  const prefsRows = (await allRows<BranchPrefsRecord>('branchPrefs')).filter((row) => row.userId === local.id)
+  for (const row of prefsRows) {
+    const migrated: BranchPrefsRecord = {
+      ...row,
+      id: `${remoteId}:${row.openingId}`,
+      userId: remoteId,
+      updatedAt: now(),
+      dirty: true,
+    }
+    await putRow('branchPrefs', migrated)
+    if (row.id !== migrated.id) await deleteRow('branchPrefs', row.id)
+  }
   const stones = await allRows<Tombstone>('tombstones')
   for (const stone of stones) {
     if (stone.userId === local.id) await putRow('tombstones', { ...stone, userId: remoteId })
@@ -111,6 +125,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
   const [status, setStatus] = useState<Status>(supabaseConfigured ? 'synced' : 'device')
   const [statusDetail, setStatusDetail] = useState<string>()
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>()
   const [revision, setRevision] = useState(0)
   const userRef = useRef<Account | null>(null)
   const syncing = useRef(false)
@@ -134,6 +149,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setStatus('syncing')
     try {
       await syncAccount(current.id)
+      setLastSyncedAt(now())
       setStatus('synced')
       setStatusDetail(undefined)
       bump()
@@ -160,10 +176,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           await seedCaroKann(account.id).catch(() => false)
           setUser(account)
           userRef.current = account
-          await syncAccount(account.id).catch((error: unknown) => {
-            setStatus('error')
-            setStatusDetail(explainSyncError(error))
-          })
+          await syncNow()
         }
       } else {
         const saved = await getMeta<Account & { mode: 'local' }>('session')
@@ -215,7 +228,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       online,
       status: !online ? 'offline' : status,
       statusDetail,
+      lastSyncedAt,
       revision,
+      syncNow: () => syncNow(),
       async signIn(email, password) {
         const address = cleanEmail(email)
         if (!address || !password) throw new DataError('Enter an email and a password.')
@@ -329,8 +344,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const progress = (await allRows<ProgressRecord>('progress')).filter(
           (row) => row.openingId === id && row.userId === current.id,
         )
+        const branchPrefs = (await allRows<BranchPrefsRecord>('branchPrefs')).filter(
+          (row) => row.openingId === id && row.userId === current.id,
+        )
         for (const line of lines) await tombstone('lines', line.id, current.id)
         for (const mark of progress) await tombstone('progress', mark.id, current.id)
+        for (const prefs of branchPrefs) await deleteRow('branchPrefs', prefs.id)
         await tombstone('openings', id, current.id)
         bump()
         void syncNow()
@@ -340,31 +359,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return (await allRows<LineRecord>('lines'))
           .filter((row) => row.userId === current.id && row.openingId === openingId)
           .sort((a, b) => a.sortOrder - b.sortOrder)
-      },
-      async saveDrafts(openingId, drafts) {
-        const current = requireUser()
-        const existing = await this.listLines(openingId)
-        let order = existing.reduce((max, line) => Math.max(max, line.sortOrder), 0)
-        const stamp = now()
-        for (const draft of drafts) {
-          order += 1
-          const row: LineRecord = {
-            id: crypto.randomUUID(),
-            userId: current.id,
-            openingId,
-            groupName: draft.groupName.trim() || 'Lines',
-            name: draft.name.trim() || 'Line',
-            pgn: draft.pgn,
-            included: draft.included,
-            sortOrder: order,
-            createdAt: stamp,
-            updatedAt: stamp,
-            dirty: true,
-          }
-          await putRow('lines', row)
-        }
-        bump()
-        void syncNow()
       },
       async updateLine(id, patch) {
         const current = requireUser()
@@ -393,11 +387,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
       },
       async getBranchPrefs(openingId) {
         const current = requireUser()
-        return (await getMeta<BranchPrefs>(`branchPrefs:${current.id}:${openingId}`)) ?? {}
+        const row = (await allRows<BranchPrefsRecord>('branchPrefs')).find(
+          (item) => item.userId === current.id && item.openingId === openingId,
+        )
+        return row?.prefs ?? {}
       },
       async saveBranchPrefs(openingId, prefs) {
         const current = requireUser()
-        await setMeta(`branchPrefs:${current.id}:${openingId}`, prefs)
+        await putRow('branchPrefs', {
+          id: `${current.id}:${openingId}`,
+          userId: current.id,
+          openingId,
+          prefs,
+          updatedAt: now(),
+          dirty: true,
+        } satisfies BranchPrefsRecord)
+        bump()
+        void syncNow()
       },
       async deleteLine(id) {
         const current = requireUser()
@@ -453,7 +459,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       },
     }
-  }, [online, ready, revision, status, statusDetail, user])
+  }, [lastSyncedAt, online, ready, revision, status, statusDetail, user])
 
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>
 }

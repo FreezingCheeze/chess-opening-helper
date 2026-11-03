@@ -1,3 +1,5 @@
+import type { BranchPrefs } from '@opening/engine'
+
 export type OpeningRecord = {
   id: string
   userId: string
@@ -34,6 +36,15 @@ export type ProgressRecord = {
   dirty?: boolean
 }
 
+export type BranchPrefsRecord = {
+  id: string
+  userId: string
+  openingId: string
+  prefs: BranchPrefs
+  updatedAt: string
+  dirty?: boolean
+}
+
 export type LocalUser = {
   id: string
   email: string
@@ -50,7 +61,7 @@ export type Tombstone = {
 }
 
 const DB_NAME = 'opening-trainer'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 let opened: Promise<IDBDatabase> | null = null
 
@@ -59,12 +70,39 @@ function database(): Promise<IDBDatabase> {
   if (!opened) {
     opened = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result
-        for (const name of ['openings', 'lines', 'progress', 'users', 'tombstones']) {
+        for (const name of ['openings', 'lines', 'progress', 'branchPrefs', 'users', 'tombstones']) {
           if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' })
         }
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' })
+
+        if (event.oldVersion < 2) {
+          const transaction = request.transaction
+          if (!transaction) return
+          const meta = transaction.objectStore('meta')
+          const preferences = transaction.objectStore('branchPrefs')
+          const cursorRequest = meta.openCursor()
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result
+            if (!cursor) return
+            const row = cursor.value as { key?: string; value?: BranchPrefs }
+            const match = row.key?.match(/^branchPrefs:([^:]+):([^:]+)$/)
+            if (match) {
+              const [, userId, openingId] = match
+              preferences.put({
+                id: `${userId}:${openingId}`,
+                userId,
+                openingId,
+                prefs: row.value ?? {},
+                updatedAt: new Date().toISOString(),
+                dirty: true,
+              } satisfies BranchPrefsRecord)
+              cursor.delete()
+            }
+            cursor.continue()
+          }
+        }
       }
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => {

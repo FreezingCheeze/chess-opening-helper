@@ -68,6 +68,19 @@ async function writeCaroKann(userId: string): Promise<boolean> {
   const lines = (await allRows<LineRecord>('lines')).filter((row) => row.userId === userId && row.openingId === opening.id)
   let order = lines.reduce((max, line) => Math.max(max, line.sortOrder), 0)
   const seedIds = new Set(caroKannLines.map((line) => `${ID_PREFIX}${line.slug}`))
+  const accidentalC5 = pgnForMoves(['e4', 'c6', 'd4', 'd5', 'Nc3', 'c5'])
+  for (const line of lines.filter(
+    (row) =>
+      !seedIds.has(row.id) &&
+      row.name === 'c5' &&
+      row.groupName === 'Classical' &&
+      row.pgn === accidentalC5,
+  )) {
+    await deleteRow('lines', line.id)
+    const stone: Tombstone = { id: `lines:${line.id}`, table: 'lines', rowId: line.id, userId }
+    await putRow('tombstones', stone)
+    changed = true
+  }
   for (const line of caroKannLines) {
     const id = `${ID_PREFIX}${line.slug}`
     const pgn = pgnForMoves(line.moves)

@@ -13,7 +13,7 @@ create table if not exists public.openings (
 );
 
 create table if not exists public.lines (
-  id uuid primary key,
+  id text primary key,
   user_id uuid not null references auth.users (id) on delete cascade,
   opening_id uuid not null references public.openings (id) on delete cascade,
   group_name text not null default '',

@@ -57,6 +57,8 @@ export {
   branchParentKey,
   findMove,
   mainPathFrom,
+  nodeTitleKey,
+  nodeTitlesFrom,
   pathNotation,
   pathPrefix,
   repertoireOf,
