@@ -239,11 +239,5 @@ export function explainSyncError(error: unknown): string {
       : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
         ? error.message
         : 'Could not sync.'
-  if (/invalid input syntax for type uuid/i.test(message)) {
-    return 'Run 0003_line_text_ids.sql in the Supabase SQL editor, then try again.'
-  }
-  if (/relation|schema cache|permission|row-level|42P01/i.test(message)) {
-    return 'On a new project, run 0001_init.sql, 0002_branch_prefs.sql, and 0003_line_text_ids.sql. If 0001 and 0002 are already applied, run only 0003_line_text_ids.sql.'
-  }
   return message
 }

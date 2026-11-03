@@ -78,7 +78,7 @@ function friendlyAuth(error: { message?: string }): string {
   if (/invalid login|invalid credentials/i.test(message)) return 'That email or password does not match.'
   if (/already registered|already exists/i.test(message)) return 'An account with that email already exists. Sign in instead.'
   if (/not confirmed/i.test(message)) {
-    return 'Confirm that email, or turn off email confirmation in the free Supabase project.'
+    return 'Please confirm your email before signing in.'
   }
   if (/password/i.test(message) && /least|short|weak/i.test(message)) return 'Use a password of at least 6 characters.'
   return message
@@ -265,7 +265,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const { data, error } = await supabase.auth.signUp({ email: address, password })
           if (error) throw new DataError(friendlyAuth(error))
           if (!data.session || !data.user) {
-            throw new DataError('Confirm that email, or turn off email confirmation in the free Supabase project.')
+            throw new DataError('Check your email for a confirmation link, then sign in.')
           }
           const account = { id: data.user.id, email: data.user.email ?? address }
           await adoptLocalRows(address, account.id)
