@@ -72,7 +72,7 @@ export function App() {
               disabled={!data.configured || !data.online || data.status === 'syncing'}
               title={
                 !data.configured
-                  ? 'Add Supabase credentials to enable cross-device sync'
+                  ? 'Cross-device sync is unavailable'
                   : !data.online
                     ? 'Reconnect to sync'
                     : 'Sync saved data now'
