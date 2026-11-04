@@ -7,16 +7,31 @@ import { go } from '../lib/routes'
 export function CreateOpening() {
   const data = useData()
   const [name, setName] = useState('')
-  const [color, setColor] = useState<Color>('black')
+  const [color, setColor] = useState<Color>('white')
   const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+
+  const trimmed = name.trim()
+  const canSubmit = Boolean(trimmed) && !pending
 
   async function create() {
-    if (!name.trim()) {
-      setError('Name the opening.')
-      return
+    if (!canSubmit) return
+    setError('')
+    setPending(true)
+    try {
+      const openings = await data.listOpenings()
+      const taken = openings.some((opening) => opening.name.trim().toLowerCase() === trimmed.toLowerCase())
+      if (taken) {
+        setError('You already have an opening with that name.')
+        return
+      }
+      const opening = await data.createOpening(trimmed, color)
+      go(`/o/${opening.id}`)
+    } catch {
+      setError('Could not create the opening.')
+    } finally {
+      setPending(false)
     }
-    const opening = await data.createOpening(name, color)
-    go(`/o/${opening.id}`)
   }
 
   return (
@@ -31,7 +46,15 @@ export function CreateOpening() {
       <h1>New opening</h1>
       <label>
         <span>Name</span>
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Caro-Kann" />
+        <input
+          value={name}
+          autoFocus
+          onChange={(event) => {
+            setName(event.target.value)
+            if (error) setError('')
+          }}
+          placeholder="Caro-Kann"
+        />
       </label>
       <div className="segment" role="group" aria-label="Your color">
         <button type="button" className="btn secondary" aria-pressed={color === 'white'} onClick={() => setColor('white')}>
@@ -41,9 +64,10 @@ export function CreateOpening() {
           I play Black
         </button>
       </div>
+      <p className="quiet">Board and practice use this side.</p>
       {error ? <p className="note">{error}</p> : null}
-      <button className="btn primary" type="submit">
-        Create opening
+      <button className="btn primary" type="submit" disabled={!canSubmit}>
+        {pending ? 'Creating…' : 'Create opening'}
       </button>
     </form>
   )
