@@ -81,6 +81,9 @@ export function App() {
             >
               {data.status === 'syncing' ? 'Syncing…' : 'Sync now'}
             </button>
+            <button className="btn quiet sync-button" type="button" onClick={() => void data.signOut()}>
+              Sign out
+            </button>
           </div>
         ) : null}
       </header>

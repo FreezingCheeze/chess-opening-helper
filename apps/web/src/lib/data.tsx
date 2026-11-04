@@ -5,6 +5,7 @@ import {
   clearMeta,
   deleteRow,
   getMeta,
+  getRow,
   putRow,
   setMeta,
   type BranchPrefsRecord,
@@ -19,6 +20,8 @@ import { seedCaroKann } from './seed'
 import { explainSyncError, syncAccount } from './sync'
 
 export type Account = { id: string; email: string }
+
+export type OpeningSummary = OpeningRecord & { lineCount: number }
 
 type Status = 'device' | 'synced' | 'syncing' | 'offline' | 'error'
 
@@ -36,6 +39,7 @@ type DataApi = {
   signUp: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   listOpenings: () => Promise<OpeningRecord[]>
+  listOpeningSummaries: () => Promise<OpeningSummary[]>
   getOpening: (id: string) => Promise<OpeningRecord | undefined>
   createOpening: (name: string, myColor: 'white' | 'black') => Promise<OpeningRecord>
   updateOpening: (id: string, patch: { name?: string }) => Promise<void>
@@ -306,11 +310,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const current = requireUser()
         return (await allRows<OpeningRecord>('openings'))
           .filter((row) => row.userId === current.id)
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      },
+      async listOpeningSummaries() {
+        const current = requireUser()
+        const openings = await this.listOpenings()
+        const counts = new Map<string, number>()
+        for (const line of await allRows<LineRecord>('lines')) {
+          if (line.userId !== current.id) continue
+          counts.set(line.openingId, (counts.get(line.openingId) ?? 0) + 1)
+        }
+        return openings.map((opening) => ({
+          ...opening,
+          lineCount: counts.get(opening.id) ?? 0,
+        }))
       },
       async getOpening(id) {
-        const rows = await this.listOpenings()
-        return rows.find((row) => row.id === id)
+        const current = requireUser()
+        const row = await getRow<OpeningRecord>('openings', id)
+        return row?.userId === current.id ? row : undefined
       },
       async createOpening(name, myColor) {
         const current = requireUser()
