@@ -7,3 +7,4 @@ apps/web/.env.local
 .DS_Store
 *.log
 dev-dist/
+.cursor/
