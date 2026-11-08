@@ -166,3 +166,26 @@ export async function setMeta<T>(key: string, value: T): Promise<void> {
 export async function clearMeta(key: string): Promise<void> {
   await deleteRow('meta', key)
 }
+
+export type LocalWrite =
+  | { store: 'lines' | 'openings' | 'tombstones' | 'branchPrefs'; type: 'put'; value: unknown }
+  | { store: 'lines' | 'openings' | 'tombstones' | 'branchPrefs'; type: 'delete'; id: string }
+
+/** One IndexedDB transaction, so a failed save does not keep part of the change. */
+export async function applyLocalChanges(writes: LocalWrite[]): Promise<void> {
+  if (writes.length === 0) return
+  const db = await database()
+  const names = [...new Set(writes.map((write) => write.store))]
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(names, 'readwrite')
+    const fail = () => reject(tx.error ?? new Error('Could not save.'))
+    tx.oncomplete = () => resolve()
+    tx.onerror = fail
+    tx.onabort = fail
+    for (const write of writes) {
+      const store = tx.objectStore(write.store)
+      if (write.type === 'delete') store.delete(write.id)
+      else store.put(write.value)
+    }
+  })
+}

@@ -32,6 +32,7 @@ type Token =
   | { t: '(' }
   | { t: ')' }
   | { t: 'comment'; v: string }
+  | { t: 'result' }
 
 const SAN_RE =
   /^(?:O-O-O|O-O|0-0-0|0-0|[NBRQK][a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|[a-h]x[a-h][1-8](?:=[NBRQ])?[+#]?|[a-h][1-8](?:=[NBRQ])?[+#]?)/
@@ -84,10 +85,12 @@ function tokenize(input: string): { tokens: Token[]; error?: string } {
     }
     if (input.startsWith('1-0', i) || input.startsWith('0-1', i) || input.startsWith('1/2-1/2', i)) {
       i += input.startsWith('1/2-1/2', i) ? 7 : 3
+      tokens.push({ t: 'result' })
       continue
     }
     if (ch === '*') {
       i += 1
+      tokens.push({ t: 'result' })
       continue
     }
     const sanMatch = SAN_RE.exec(input.slice(i))
@@ -113,7 +116,7 @@ function parseMoves(tokens: Token[], index: number): { moves: ParsedMove[]; inde
   const moves: ParsedMove[] = []
   let i = index
   while (i < tokens.length) {
-    if (tokens[i].t === ')') break
+    if (tokens[i].t === ')' || tokens[i].t === 'result') break
     let commentBefore: string | undefined
     while (tokens[i]?.t === 'comment') {
       const token = tokens[i]
@@ -222,21 +225,39 @@ function legalPaths(startFen: string, paths: Step[][]): { paths: Step[][]; illeg
   return { paths: accepted, illegal }
 }
 
-function parseGame(chunk: string): { game?: ParsedGame; error?: string } {
+function parseGame(chunk: string): { games: ParsedGame[]; errors: string[]; warnings: string[] } {
   const { tags, movetext } = readTags(chunk)
-  if (!movetext.trim()) return {}
+  if (!movetext.trim()) return { games: [], errors: [], warnings: [] }
   const setup = tags.SetUp === '1' || tags.Setup === '1'
-  const startFen = setup && tags.FEN ? normalizeFen(tags.FEN) : START_FEN
-  if (!startFen) return { error: 'The FEN tag in that PGN could not be read.' }
+  const taggedFen = setup && tags.FEN ? normalizeFen(tags.FEN) : START_FEN
+  if (!taggedFen) return { games: [], errors: ['The FEN tag in that PGN could not be read.'], warnings: [] }
   const tokenized = tokenize(movetext)
-  if (tokenized.error) return { error: tokenized.error }
-  const parsed = parseMoves(tokenized.tokens, 0)
-  const legal = legalPaths(startFen, expand(parsed.moves, []))
-  if (legal.paths.length === 0) {
-    const detail = legal.illegal ? ` ${legal.illegal} is not legal in that line.` : ''
-    return { error: `Those moves could not be read as a chess line.${detail}` }
+  if (tokenized.error) return { games: [], errors: [tokenized.error], warnings: [] }
+  const games: ParsedGame[] = []
+  const errors: string[] = []
+  const warnings: string[] = []
+  const tokens = tokenized.tokens
+  let index = 0
+  let useTags = true
+  while (index < tokens.length) {
+    while (tokens[index]?.t === 'result') index += 1
+    if (index >= tokens.length) break
+    const parsed = parseMoves(tokens, index)
+    index = parsed.index
+    if (tokens[index]?.t === 'result') index += 1
+    if (parsed.moves.length === 0) continue
+    const startFen = useTags ? taggedFen : START_FEN
+    useTags = false
+    const legal = legalPaths(startFen, expand(parsed.moves, []))
+    if (legal.paths.length === 0) {
+      const detail = legal.illegal ? ` ${legal.illegal} is not legal in that line.` : ''
+      errors.push(`Those moves could not be read as a chess line.${detail}`)
+      continue
+    }
+    if (legal.illegal) warnings.push(`Skipped ${legal.illegal}, which is not a legal move in that line.`)
+    games.push({ tags: games.length === 0 ? tags : {}, startFen, paths: legal.paths })
   }
-  return { game: { tags, startFen, paths: legal.paths } }
+  return { games, errors, warnings }
 }
 
 export function toPgn(startFen: string, moves: Step[]): string {
@@ -321,40 +342,43 @@ function draftsFromGame(game: ParsedGame, myColor: Color): DraftLine[] {
   })
 }
 
-export function importPgn(pgnText: string, myColor: Color): { drafts: DraftLine[]; error?: string } {
+export function importPgn(
+  pgnText: string,
+  myColor: Color,
+): { drafts: DraftLine[]; error?: string; warnings?: string[] } {
   const text = pgnText.trim()
   if (!text) return { drafts: [], error: 'Paste a game or a line first.' }
-  if (/^https?:\/\//i.test(text)) {
-    return { drafts: [], error: 'That looks like a link. Use the Lichess study option for a study link.' }
+  if (/^https?:\/\//i.test(text) || /^lichess\.org\//i.test(text)) {
+    return { drafts: [], error: 'That looks like a link. Paste the PGN instead.' }
   }
-  const errors: string[] = []
+  const warnings: string[] = []
   const drafts: DraftLine[] = []
   for (const chunk of splitGames(text)) {
     const parsed = parseGame(chunk)
-    if (parsed.error) errors.push(parsed.error)
-    if (parsed.game) drafts.push(...draftsFromGame(parsed.game, myColor))
+    warnings.push(...parsed.errors, ...parsed.warnings)
+    for (const game of parsed.games) drafts.push(...draftsFromGame(game, myColor))
   }
   if (drafts.length === 0) {
-    return { drafts: [], error: errors[0] || 'Those moves could not be read. Paste PGN from Lichess or Chess.com.' }
+    return { drafts: [], error: warnings[0] || 'Those moves could not be read. Paste PGN from Lichess or Chess.com.' }
   }
-  return { drafts }
+  return { drafts, warnings: warnings.length > 0 ? warnings : undefined }
 }
 
 export function firstPath(pgn: string): { startFen: string; moves: Step[] } | null {
   const chunk = splitGames(pgn)[0]
   if (!chunk) return null
-  const parsed = parseGame(chunk)
-  const path = parsed.game?.paths[0]
-  if (!parsed.game || !path) return null
-  return { startFen: parsed.game.startFen, moves: path }
+  const game = parseGame(chunk).games[0]
+  const path = game?.paths[0]
+  if (!game || !path) return null
+  return { startFen: game.startFen, moves: path }
 }
 
 export function allPaths(pgn: string): { startFen: string; moves: Step[] }[] {
   const paths: { startFen: string; moves: Step[] }[] = []
   for (const chunk of splitGames(pgn)) {
-    const parsed = parseGame(chunk)
-    if (!parsed.game) continue
-    for (const path of parsed.game.paths) paths.push({ startFen: parsed.game.startFen, moves: path })
+    for (const game of parseGame(chunk).games) {
+      for (const path of game.paths) paths.push({ startFen: game.startFen, moves: path })
+    }
   }
   return paths
 }
@@ -388,4 +412,11 @@ export function lichessStudyId(input: string): string | null {
 
 export function isGenericGroup(name: string): boolean {
   return GENERIC_GROUPS.has(name.trim())
+}
+
+/** One entry per stored variation. A line whose PGN has several variations becomes one entry each. */
+export function variationLines<T extends { pgn: string }>(line: T): T[] {
+  const paths = allPaths(line.pgn)
+  if (paths.length <= 1) return [line]
+  return paths.map((path) => ({ ...line, pgn: toPgn(path.startFen, path.moves) }))
 }
