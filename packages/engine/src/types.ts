@@ -54,13 +54,14 @@ export type ProgressMark = {
 }
 
 export type PracticeStep = {
-  type: 'opponent' | 'introduce' | 'ask'
+  type: 'opponent' | 'ask'
   san: string
   fenBefore: string
   fenAfter: string
   positionKey: string
-  comment?: string
-  label?: string
+  /** Moves from `startFen` that reached `fenBefore`. */
+  path: string[]
+  startFen: string
   lineId: string
 }
 
