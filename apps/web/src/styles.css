@@ -147,6 +147,8 @@ p { margin: 0; }
 .btn.quiet { background: transparent; border-color: transparent; color: var(--muted); min-height: 48px; }
 
 .segment { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.segment.one { grid-template-columns: 1fr; }
+.segment.three { grid-template-columns: 1fr 1fr 1fr; }
 .segment button[aria-pressed="true"] { background: var(--accent); color: #f4fff8; border-color: var(--accent); }
 
 label { display: grid; gap: 6px; font-weight: 600; }
@@ -203,6 +205,8 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
 }
 
 .board-side {
+  position: relative;
+  z-index: 1;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
   width: min(100%, 560px);
@@ -220,6 +224,15 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
 .board-nav .btn {
   min-height: 36px;
   padding: 2px 16px;
+}
+
+/* Chessground snaps the squares to whole device pixels and leaves the
+   remainder on the right and bottom. Center that remainder so the wood
+   is the same width on every side. */
+.board-frame cg-container {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .board-line {
@@ -244,6 +257,109 @@ textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
   line-height: 1.45;
   margin: 0;
 }
+
+.panel.practice-panel {
+  grid-template-rows: none;
+  align-content: start;
+  min-height: 0;
+}
+
+.practice-count {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-and-eval {
+  position: relative;
+}
+
+.eval-stack {
+  position: absolute;
+  left: calc(100% + 16px);
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+}
+
+.taken-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 12px;
+}
+
+.taken-row > span:first-child { color: var(--muted); }
+
+.eval-badge {
+  margin: 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.check-line input {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+}
+
+.material-pieces {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 1.2em;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.material-pieces .white {
+  color: #fffaf3;
+  text-shadow: 0 0 1px #4a4036, 0 1px 0 #4a4036;
+}
+
+.material-pieces .black { color: #241c15; }
+
+.material-score { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+button.board-ply {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 0 1px;
+  font: inherit;
+}
+
+.tree-label.correct { color: var(--accent-deep); }
+.tree-label.missed { color: var(--warn); }
+
+.board-line.compact { min-height: 0; }
 
 .opening-practice-actions {
   display: grid;

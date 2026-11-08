@@ -28,16 +28,19 @@ export { chooseLearning, compile, keepOneUserReply, reconcileLearning } from './
 export {
   answer,
   beginReplay,
-  continueAfterLine,
   continueAfterWrong,
   createSession,
   currentStep,
+  hideMove,
   next,
+  practiceConflicts,
+  retryMisses,
+  retryRound,
   scriptForLine,
   sessionView,
   showMove,
 } from './session'
-export type { Session, SessionResult, SessionView } from './session'
+export type { PracticeConflict, PracticeOptions, PracticeOrder, Session, SessionResult, SessionView } from './session'
 export {
   commentOnLast,
   editorChoices,

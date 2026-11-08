@@ -1,6 +1,7 @@
 import { Chessground } from '@lichess-org/chessground'
 import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
+import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { checkedSide, legalDests, sideToMove, START_FEN, type Color } from '@opening/engine'
 import { useEffect, useRef, useState } from 'react'
@@ -16,11 +17,28 @@ type BoardProps = {
   preview?: boolean
   /** Bump this to put pieces back after a move the line did not accept. */
   epoch?: number
+  /** Set false to jump to a position, such as back to a fork. */
+  animate?: boolean
   lastMove?: [string, string]
+  /** Translucent hint from the piece that should move to its destination. */
+  arrow?: [string, string]
+  /** Called when a destination is chosen while the board is only previewing. */
+  onPreviewMove?: (from: string, to: string) => void
   onMove?: (from: string, to: string) => void
 }
 
-export function Board({ fen, orientation, interactive, preview = false, epoch = 0, lastMove, onMove }: BoardProps) {
+export function Board({
+  fen,
+  orientation,
+  interactive,
+  preview = false,
+  epoch = 0,
+  animate = true,
+  lastMove,
+  arrow,
+  onPreviewMove,
+  onMove,
+}: BoardProps) {
   const host = useRef<HTMLDivElement>(null)
   const ground = useRef<Api | null>(null)
   const onMoveRef = useRef(onMove)
@@ -29,10 +47,14 @@ export function Board({ fen, orientation, interactive, preview = false, epoch = 
   const shownRef = useRef(shown)
   const interactiveRef = useRef(interactive)
   const previewRef = useRef(preview)
+  const onPreviewRef = useRef(onPreviewMove)
+  const heldRef = useRef<{ fen: string; square: string } | null>(null)
   shownRef.current = shown
   interactiveRef.current = interactive
   previewRef.current = preview
+  onPreviewRef.current = onPreviewMove
   const [held, setHeld] = useState<{ fen: string; square: string } | null>(null)
+  heldRef.current = held
   const epochRef = useRef(epoch)
 
   useEffect(() => {
@@ -40,7 +62,7 @@ export function Board({ fen, orientation, interactive, preview = false, epoch = 
     if (!element) return
     ground.current = Chessground(element, {
       coordinates: true,
-      animation: { enabled: true, duration: 180 },
+      animation: { enabled: animate, duration: animate ? 300 : 0 },
       movable: { free: false, showDests: true },
       premovable: { enabled: false },
       draggable: { enabled: true, distance: 3, autoDistance: false },
@@ -51,12 +73,18 @@ export function Board({ fen, orientation, interactive, preview = false, epoch = 
           if (interactiveRef.current || !previewRef.current) return
           const position = shownRef.current
           const origins = legalDests(position)
+          const current = heldRef.current
+          if (current && current.fen === position && origins.get(current.square)?.includes(key)) {
+            onPreviewRef.current?.(current.square, key)
+            setHeld(null)
+            return
+          }
           if (!origins.has(key)) {
             setHeld(null)
             return
           }
-          setHeld((current) =>
-            current && current.fen === position && current.square === key ? null : { fen: position, square: key },
+          setHeld((previous) =>
+            previous && previous.fen === position && previous.square === key ? null : { fen: position, square: key },
           )
         },
       },
@@ -110,10 +138,25 @@ export function Board({ fen, orientation, interactive, preview = false, epoch = 
       trustAllEvents: true,
       coordinates: true,
       highlight: { lastMove: true, check: true, custom: marks },
-      animation: { enabled: true, duration: 180 },
+      animation: { enabled: animate, duration: animate ? 300 : 0 },
       selectable: { enabled: canSelect },
       // Dragging would commit a preview click. Selection is enough until the turn arrives.
       draggable: { enabled: canMove, distance: 3, autoDistance: false },
+      drawable: {
+        enabled: false,
+        visible: true,
+        eraseOnMovablePieceClick: false,
+        autoShapes: arrow
+          ? [{ orig: arrow[0] as Key, dest: arrow[1] as Key, brush: 'hint' } satisfies DrawShape]
+          : [],
+        brushes: {
+          green: { key: 'g', color: '#15781B', opacity: 1, lineWidth: 10 },
+          red: { key: 'r', color: '#882020', opacity: 1, lineWidth: 10 },
+          blue: { key: 'b', color: '#003088', opacity: 1, lineWidth: 10 },
+          yellow: { key: 'y', color: '#e68f00', opacity: 1, lineWidth: 10 },
+          hint: { key: 'hint', color: '#ffffff', opacity: 0.8, lineWidth: 14 },
+        },
+      },
       movable: {
         free: false,
         color: canSelect ? turn : undefined,
@@ -127,7 +170,7 @@ export function Board({ fen, orientation, interactive, preview = false, epoch = 
     if (kept) config.selected = kept as Key
     else if (!canMove || epochChanged) config.selected = undefined
     ground.current?.set(config)
-  }, [shown, orientation, interactive, preview, lastMove, held, epoch])
+  }, [shown, orientation, interactive, preview, lastMove, held, epoch, animate, arrow?.[0], arrow?.[1]])
 
   return (
     <div className="board-frame">

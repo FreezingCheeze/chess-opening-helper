@@ -7,17 +7,15 @@ import {
   caroKannLines,
   pgnForMoves,
   repertoireAdjustments,
-  beginReplay,
   chooseLearning,
   compile,
-  continueAfterLine,
-  continueAfterWrong,
   createSession,
   currentStep,
   editorChoices,
   editorDrafts,
   findMove,
   firstPath,
+  hideMove,
   importPgn,
   learningImpact,
   lichessStudyId,
@@ -30,11 +28,14 @@ import {
   planAdditions,
   planBranchRemoval,
   playSan,
+  practiceConflicts,
   positionKey,
   readableRows,
   repertoireOf,
   resetDraftIds,
   retainedSeedIds,
+  retryMisses,
+  retryRound,
   rewindForOpponentTry,
   sessionView,
   showMove,
@@ -176,89 +177,248 @@ describe('merge', () => {
 })
 
 describe('practice session', () => {
-  it('shows your move once, then asks you to play it', () => {
-    const line = {
-      id: 'line-1',
-      name: 'Main line',
-      groupName: 'Exchange',
-      pgn: '1. e4 c6 2. d4 d5 *',
+  const classical = {
+    id: 'classical',
+    name: 'Classical',
+    groupName: 'Caro',
+    pgn: '1. e4 c6 {Caro} 2. d4 d5 3. Nc3 dxe4 *',
+  }
+  const exchange = {
+    id: 'exchange',
+    name: 'Exchange',
+    groupName: 'Caro',
+    pgn: '1. e4 c6 2. d4 d5 3. exd5 cxd5 *',
+  }
+  const caro = [classical, exchange]
+
+  it('asks for a shared prefix once, then plays every opponent branch from the fork', () => {
+    const steps = createSession(caro, 'black', []).rounds[0]?.steps ?? []
+    expect(steps.map((step) => `${step.type}:${step.san}`)).toEqual([
+      'opponent:e4',
+      'ask:c6',
+      'opponent:d4',
+      'ask:d5',
+      'opponent:Nc3',
+      'ask:dxe4',
+      'opponent:exd5',
+      'ask:cxd5',
+    ])
+    const fork = fenAfter(['e4', 'c6', 'd4', 'd5'])
+    const branched = steps.find((step) => step.san === 'exd5')
+    expect(branched?.path).toEqual(['e4', 'c6', 'd4', 'd5'])
+    expect(branched?.fenBefore).toBe(fork)
+    expect(steps[steps.findIndex((step) => step.san === 'exd5') - 1]?.fenAfter).not.toBe(fork)
+    expect(sessionView(createSession(caro, 'black', [])).prompt).toBe('Opponent\u2019s move')
+    const ask = untilAsk(createSession(caro, 'black', []), 'c6')
+    const view = sessionView(ask)
+    expect(view.prompt).toBe('Your move')
+    expect(view.interactive).toBe(true)
+    expect(view.played).toEqual(['e4'])
+    expect(view.prompt).not.toContain('c6')
+    expect(view.prompt).not.toContain('Caro')
+    expect(view.progress).toEqual({ done: 1, total: 4 })
+    const key = positionKey(fenAfter(['e4']))
+    for (const introduced of [false, true]) {
+      const marked = untilAsk(
+        createSession(caro, 'black', [{ positionKey: key, expectedSan: 'c6', introduced, needsReview: false }]),
+        'c6',
+      )
+      expect(currentStep(marked)?.type).toBe('ask')
+      expect(sessionView(marked).prompt).toBe('Your move')
     }
-    let session = createSession([line], 'black', [])
-    const first = sessionView(session, [line], 'black')
-    expect(first.prompt).toMatch(/White plays e4/)
-    session = next(session).session
-    const intro = sessionView(session, [line], 'black')
-    expect(intro.prompt).toBe('Your move here is c6.')
-    expect(intro.interactive).toBe(false)
-    session = next(session).session
-    const ask = sessionView(session, [line], 'black')
-    expect(ask.prompt).toBe('Your move')
-    expect(ask.interactive).toBe(true)
-    const wrong = answer(session, 'e5')
+  })
+
+  it('plays review branches first, then the preferred move, then the rest in a fixed order', () => {
+    expect(trace(caro, 'black').filter((step) => step.startsWith('opponent:'))).toEqual(['opponent:e4', 'opponent:d4', 'opponent:Nc3', 'opponent:exd5'])
+    const preferred = withPreferredMove({}, ['e4', 'c6', 'd4', 'd5'], 'exd5')
+    expect(branchOrder(trace(caro, 'black', [], preferred))).toEqual(['exd5', 'Nc3'])
+    const review = [
+      {
+        positionKey: positionKey(fenAfter(['e4', 'c6', 'd4', 'd5', 'exd5'])),
+        expectedSan: 'cxd5',
+        introduced: true,
+        needsReview: true,
+      },
+    ]
+    const preferMain = withPreferredMove({}, ['e4', 'c6', 'd4', 'd5'], 'Nc3')
+    expect(branchOrder(trace(caro, 'black', review, preferMain))).toEqual(['exd5', 'Nc3'])
+  })
+
+  it('reports your own conflicting replies instead of choosing one', () => {
+    const same = { id: 'same', name: 'Also classical', groupName: 'Caro', pgn: classical.pgn }
+    const knight = { id: 'knight', name: 'Knight', groupName: 'Caro', pgn: '1. e4 c6 2. d4 d5 3. Nc3 Nf6 *' }
+    const lines = [classical, same, knight]
+    const conflicts = practiceConflicts(lines, 'black')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]?.options.map((option) => option.san).sort()).toEqual(['Nf6', 'dxe4'])
+    const blocked = createSession(lines, 'black', [])
+    expect(blocked.phase).toBe('done')
+    expect(blocked.rounds).toHaveLength(0)
+    const chosen = chooseLearning(
+      lines.map((line) => ({ ...line, included: true, yourChoice: false })),
+      classical.id,
+      true,
+      'black',
+    )
+    const kept = chosen.drafts.filter((line) => line.included)
+    expect(kept.map((line) => line.id).sort()).toEqual(['classical', 'same'])
+    expect(practiceConflicts(kept, 'black')).toHaveLength(0)
+    expect(trace(kept, 'black').filter((step) => step === 'ask:dxe4')).toEqual(['ask:dxe4'])
+    expect(trace(kept, 'black').some((step) => step === 'ask:Nf6')).toBe(false)
+  })
+
+  it('records the first wrong move immediately and does not clear it after a self-correction', () => {
+    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 *' }
+    const ask = untilAsk(createSession([line], 'black', []), 'c6')
+    const wrong = answer(ask, 'e5')
+    expect(wrong.events.map((event) => event.type)).toEqual(['miss'])
     expect(wrong.session.phase).toBe('wrong')
-    const missed = sessionView(wrong.session, [line], 'black')
-    expect(missed.prompt).toBe('That’s not the move in this line.')
+    const missed = sessionView(wrong.session)
+    expect(missed.prompt).toBe('That\u2019s not the move in this line.')
+    expect(missed.prompt).not.toContain('c6')
+    expect(missed.fen).toBe(sessionView(ask).fen)
     expect(missed.interactive).toBe(true)
-    expect(missed.fen).toBe(ask.fen)
     const again = answer(wrong.session, 'Nf6')
+    expect(again.events).toEqual([])
     expect(again.session.phase).toBe('wrong')
-    expect(again.events).toHaveLength(0)
     const corrected = answer(wrong.session, 'c6')
-    expect(corrected.events[0]?.type).toBe('correct')
+    expect(corrected.events).toEqual([])
+    expect(corrected.session.phase).toBe('done')
+    expect(corrected.session.misses.map((miss) => miss.san)).toEqual(['c6'])
+    expect(sessionView(corrected.session).prompt).toBe('c6 still needs attention.')
     const revealed = showMove(wrong.session)
-    expect(sessionView(revealed.session, [line], 'black').prompt).toBe('The move in your line is c6.')
-    expect(sessionView(revealed.session, [line], 'black').interactive).toBe(false)
+    expect(revealed.events).toEqual([])
+    expect(revealed.session.hinted).toBe(true)
+    expect(revealed.session.phase).toBe('play')
+    expect(sessionView(revealed.session).interactive).toBe(true)
+    expect(sessionView(revealed.session).prompt).toBe('Play the marked move.')
+    expect(sessionView(revealed.session).prompt).not.toContain('c6')
+    expect(sessionView(revealed.session).fen).toBe(sessionView(ask).fen)
+    const fresh = answer(untilAsk(createSession([line], 'black', []), 'c6'), 'c6')
+    expect(fresh.events.map((event) => event.type)).toEqual(['correct'])
+    expect(sessionView(fresh.session).prompt).toBe('Every move matched')
+    const shown = showMove(untilAsk(createSession([line], 'black', []), 'c6'))
+    expect(shown.events.map((event) => event.type)).toEqual(['miss'])
+    expect(shown.session.phase).toBe('play')
+    expect(sessionView(shown.session).prompt).not.toContain('c6')
+    const hidden = hideMove(shown.session)
+    expect(hidden.events).toEqual([])
+    expect(hidden.session.hinted).toBe(false)
+    expect(hidden.session.misses.map((miss) => miss.san)).toEqual(['c6'])
+    expect(sessionView(hidden.session).prompt).toBe('Your move')
+    const shownAgain = showMove(hidden.session)
+    expect(shownAgain.events).toEqual([])
+    expect(shownAgain.session.hinted).toBe(true)
+    expect(shownAgain.session.misses).toHaveLength(1)
   })
 
-  it('skips the introduction after you have seen the move', () => {
-    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 *' }
-    const session = createSession(
-      [line],
-      'black',
-      [{ positionKey: currentKeyAfterE4(), expectedSan: 'c6', introduced: true, needsReview: false }],
-    )
-    const afterWhite = next(session).session
-    expect(currentStep(afterWhite)?.type).toBe('ask')
+  it('reviews only the missed position, starting from the move that led there', () => {
+    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 2. d4 d5 *' }
+    let session = answer(untilAsk(createSession([line], 'black', []), 'c6'), 'c6').session
+    session = untilAsk(session, 'd5')
+    const wrong = answer(session, 'e6')
+    const revealed = showMove(wrong.session)
+    const continued = answer(revealed.session, 'd5')
+    expect(continued.events).toEqual([])
+    expect(continued.session.phase).toBe('done')
+    expect(sessionView(continued.session).fen).toBe(fenAfter(['e4', 'c6', 'd4', 'd5']))
+    expect(sessionView(continued.session).fen).not.toBe(START_FEN)
+    const replay = retryMisses(continued.session, 'black')
+    expect(replay.scope).toBe('selection')
+    expect(replay.rounds[replay.round]?.steps.map((step) => `${step.type}:${step.san}`)).toEqual(['opponent:d4', 'ask:d5'])
+    expect(replay.rounds[replay.round]?.steps[0]?.fenBefore).not.toBe(START_FEN)
+    const again = retryRound(replay)
+    expect(again.rounds[0]?.steps.map((step) => step.san)).toEqual(['d4', 'd5'])
+    expect(again.misses).toEqual([])
+
+    const opening = { id: 'white', name: 'Main line', groupName: 'Lines', pgn: '1. e4 *' }
+    const missed = answer(showMove(answer(createSession([opening], 'white', []), 'd4').session).session, 'e4')
+    const fromSplit = retryMisses(missed.session, 'white')
+    expect(fromSplit.rounds[fromSplit.round]?.steps.map((step) => `${step.type}:${step.san}`)).toEqual(['ask:e4'])
+    expect(fromSplit.rounds[fromSplit.round]?.steps[0]?.fenBefore).toBe(START_FEN)
   })
 
-  it('brings a missed line back once', () => {
-    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 *' }
-    let session = createSession([line], 'black', [])
+  it('keeps a review miss for the next session and does not ask a third time', () => {
+    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 2. d4 d5 *' }
+    let session = answer(untilAsk(createSession([line], 'black', []), 'c6'), 'c6').session
+    session = untilAsk(session, 'd5')
+    session = answer(showMove(answer(session, 'e6').session).session, 'd5').session
+    session = retryMisses(session, 'black')
     session = next(session).session
-    session = next(session).session
-    session = answer(session, 'e5').session
-    session = showMove(session).session
-    expect(sessionView(session, [line], 'black').prompt).toBe('The move in your line is c6. This is the end of the line.')
-    const continued = continueAfterWrong(session)
-    expect(continued.session.phase).toBe('replay')
-    expect(continued.events[0].type).toBe('miss')
-    const replay = beginReplay(continued.session)
-    expect(replay.phase).toBe('play')
-    const again = replay.rounds.filter((round) => round.replay)
-    expect(again).toHaveLength(1)
-    expect(again[0].steps.some((step) => step.type === 'introduce')).toBe(false)
-    expect(again[0].steps.some((step) => step.type === 'ask')).toBe(true)
+    expect(sessionView(session).prompt).toBe('Your move')
+    expect(sessionView(session).played).not.toContain('d5')
+    const wrong = answer(session, 'e6')
+    expect(wrong.events.map((event) => event.type)).toEqual(['miss'])
+    expect(sessionView(wrong.session).prompt).toBe('That\u2019s not the move in this line.')
+    expect(sessionView(wrong.session).prompt).not.toContain('d5')
+    const corrected = answer(wrong.session, 'd5')
+    expect(corrected.events).toEqual([])
+    expect(corrected.session.phase).toBe('done')
+    const recap = sessionView(corrected.session)
+    expect(recap.prompt).toBe('d5 still needs attention.')
+    expect(recap.fen).toBe(fenAfter(['e4', 'c6', 'd4', 'd5']))
+    expect(recap.fen).not.toBe(START_FEN)
+    const another = retryMisses(corrected.session, 'black')
+    expect(another.phase).toBe('play')
+    expect(another.rounds[0]?.steps.map((step) => step.san)).toEqual(['d4', 'd5'])
+    const sameFive = retryRound(corrected.session)
+    expect(sameFive.phase).toBe('play')
+    expect(sameFive.misses).toEqual([])
+    expect(sameFive.rounds[0]?.steps.map((step) => step.san)).toEqual(['d4', 'd5'])
   })
 
-  it('stays on the final position until you continue', () => {
-    const first = { id: 'line-1', name: 'Classical', groupName: 'Caro', pgn: '1. e4 c6 *' }
-    const second = { id: 'line-2', name: 'Exchange', groupName: 'Caro', pgn: '1. e4 c6 2. d4 d5 *' }
-    let session = createSession(
-      [first, second],
-      'black',
-      [{ positionKey: currentKeyAfterE4(), expectedSan: 'c6', introduced: true, needsReview: false }],
-    )
-    session = next(session).session
-    const played = answer(session, 'c6')
-    expect(played.session.phase).toBe('lineEnd')
-    const end = sessionView(played.session, [first, second], 'black')
-    expect(end.prompt).toBe('This is the end of the line.')
-    expect(end.interactive).toBe(false)
-    expect(end.fen).not.toBe(sessionView(session, [first, second], 'black').fen)
-    const nextLine = continueAfterLine(played.session)
-    expect(nextLine.session.phase).toBe('play')
-    expect(nextLine.session.round).toBe(1)
-    expect(sessionView(nextLine.session, [first, second], 'black').prompt).toMatch(/White plays e4/)
+  it('keeps lines that start from different positions apart', () => {
+    const afterE4 = fenAfter(['e4'])
+    const late = {
+      id: 'late',
+      name: 'Late',
+      groupName: 'Lines',
+      pgn: `[SetUp "1"]\n[FEN "${afterE4}"]\n\n1... c5 *`,
+    }
+    const queen = { id: 'queen', name: 'Queen pawn', groupName: 'Lines', pgn: '1. d4 d5 *' }
+    expect(trace([late, queen], 'black')).toEqual(['ask:c5', 'opponent:d4', 'ask:d5'])
+    const review = [
+      {
+        positionKey: positionKey(fenAfter(['d4'])),
+        expectedSan: 'd5',
+        introduced: true,
+        needsReview: true,
+      },
+    ]
+    expect(trace([late, queen], 'black', review)).toEqual(['opponent:d4', 'ask:d5', 'ask:c5'])
+    const steps = createSession([late, queen], 'black', []).rounds[0]?.steps ?? []
+    expect(steps.find((step) => step.san === 'c5')?.startFen).toBe(afterE4)
+    expect(steps.find((step) => step.san === 'd5')?.startFen).toBe(START_FEN)
+  })
+
+  it('can replay every line from the start, or shuffle the repertoire order', () => {
+    const fromStart = createSession(caro, 'black', [], {}, { fromStart: true })
+    expect(fromStart.rounds[0]?.steps.map((step) => `${step.type}:${step.san}`)).toEqual([
+      'opponent:e4',
+      'ask:c6',
+      'opponent:d4',
+      'ask:d5',
+      'opponent:Nc3',
+      'ask:dxe4',
+      'opponent:e4',
+      'ask:c6',
+      'opponent:d4',
+      'ask:d5',
+      'opponent:exd5',
+      'ask:cxd5',
+    ])
+    const reversed = createSession(caro, 'black', [], {}, { order: 'random', rng: () => 0 })
+    expect(branchOrder((reversed.rounds[0]?.steps ?? []).map((step) => `${step.type}:${step.san}`))).toEqual(['exd5', 'Nc3'])
+    const line = { id: 'line-1', name: 'Main line', groupName: 'Lines', pgn: '1. e4 c6 2. d4 d5 *' }
+    let session = answer(untilAsk(createSession([line], 'black', []), 'c6'), 'c6').session
+    session = answer(untilAsk(session, 'd5'), 'e6').session
+    session = answer(session, 'd5').session
+    expect(retryMisses(session, 'black', { fromStart: true }).rounds[0]?.steps.map((step) => `${step.type}:${step.san}`)).toEqual([
+      'opponent:e4',
+      'opponent:c6',
+      'opponent:d4',
+      'ask:d5',
+    ])
   })
 })
 
@@ -559,9 +719,47 @@ describe('repertoire changes', () => {
   })
 })
 
-function currentKeyAfterE4(): string {
-  const line = { id: 'x', name: 'x', groupName: 'x', pgn: '1. e4 e5 *' }
-  const session = createSession([line], 'black', [])
-  const step = currentStep(next(session).session)
-  return step?.positionKey ?? ''
+function fenAfter(moves: string[]): string {
+  let fen = START_FEN
+  for (const san of moves) {
+    const applied = applySan(fen, san)
+    if (!applied) throw new Error(san)
+    fen = applied.fen
+  }
+  return fen
+}
+
+function untilAsk(session: ReturnType<typeof createSession>, san: string) {
+  let current = session
+  while (current.phase === 'play') {
+    const step = currentStep(current)
+    if (!step) break
+    if (step.type === 'ask') {
+      if (step.san !== san) throw new Error(`asked ${step.san}`)
+      return current
+    }
+    current = next(current).session
+  }
+  throw new Error(`missing ask ${san}`)
+}
+
+function trace(
+  lines: { id: string; name: string; groupName: string; pgn: string }[],
+  color: 'white' | 'black',
+  progress: { positionKey: string; expectedSan: string; introduced: boolean; needsReview: boolean }[] = [],
+  prefs: ReturnType<typeof withPreferredMove> = {},
+): string[] {
+  let session = createSession(lines, color, progress, prefs)
+  const played: string[] = []
+  while (session.phase === 'play') {
+    const step = currentStep(session)
+    if (!step) break
+    played.push(`${step.type}:${step.san}`)
+    session = step.type === 'opponent' ? next(session).session : answer(session, step.san).session
+  }
+  return played
+}
+
+function branchOrder(played: string[]): string[] {
+  return played.filter((step) => step === 'opponent:Nc3' || step === 'opponent:exd5').map((step) => step.slice('opponent:'.length))
 }
