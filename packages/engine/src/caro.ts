@@ -497,6 +497,24 @@ function pathRelation(seed: string[], path: string[]): 'prefix' | 'exact' | 'oth
   return 'other'
 }
 
+/**
+ * Catalog ids that still need creating.
+ * An opening that already exists is left alone, including renamed, extended, or deleted lines.
+ * A version upgrade may add catalog ids that were never stored and never deleted.
+ */
+export function retainedSeedIds(
+  catalogIds: string[],
+  existingIds: string[],
+  deletedIds: string[],
+  openingExists: boolean,
+  upgrading: boolean,
+): string[] {
+  if (openingExists && !upgrading) return []
+  const existing = new Set(existingIds)
+  const deleted = new Set(deletedIds)
+  return catalogIds.filter((id) => !existing.has(id) && !deleted.has(id))
+}
+
 export function repertoireAdjustments(
   existing: AdjustableLine[],
   seeds: { moves: string[] }[],

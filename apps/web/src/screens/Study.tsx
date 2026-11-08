@@ -19,7 +19,7 @@ export function Study({ id, lineId }: { id: string; lineId?: string }) {
       const stored = found ? await data.listLines(id) : []
       if (cancel) return
       setOpening(found ?? null)
-      const focus = lineId ? stored.filter((line) => line.id === lineId || line.included) : stored.filter((line) => line.included)
+      const focus = lineId ? stored.filter((line) => line.id === lineId) : stored.filter((line) => line.included)
       setLines(focus)
     })()
     return () => {
@@ -33,7 +33,11 @@ export function Study({ id, lineId }: { id: string; lineId?: string }) {
     return (
       <div className="stack">
         <BackButton to={`/o/${id}`} label="Back to opening" />
-        <p>Turn on a line, or open Study from a single line, before stepping through it.</p>
+        <p>
+          {lineId
+            ? 'That line is not in this opening.'
+            : 'Choose Learning on a line, or open Study from a single line, before stepping through it.'}
+        </p>
       </div>
     )
   }

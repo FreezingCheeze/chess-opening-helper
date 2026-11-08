@@ -2,6 +2,7 @@ import { chooseLearning, type BranchPrefs, type SessionEvent } from '@opening/en
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   allRows,
+  applyLocalChanges,
   clearMeta,
   deleteRow,
   getMeta,
@@ -11,6 +12,7 @@ import {
   type BranchPrefsRecord,
   type LineRecord,
   type LocalUser,
+  type LocalWrite,
   type OpeningRecord,
   type ProgressRecord,
   type Tombstone,
@@ -53,6 +55,15 @@ type DataApi = {
   getBranchPrefs: (openingId: string) => Promise<BranchPrefs>
   saveBranchPrefs: (openingId: string, prefs: BranchPrefs) => Promise<void>
   deleteLine: (id: string) => Promise<void>
+  commitLines: (
+    openingId: string,
+    changes: {
+      create?: { name: string; groupName: string; pgn: string; included: boolean }[]
+      update?: { id: string; name?: string; groupName?: string; pgn?: string; included?: boolean }[]
+      deleteIds?: string[]
+      prefs?: BranchPrefs
+    },
+  ) => Promise<void>
   listProgress: (openingId: string) => Promise<ProgressRecord[]>
   applyEvents: (openingId: string, events: SessionEvent[]) => Promise<void>
 }
@@ -137,6 +148,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   userRef.current = user
 
   const bump = () => setRevision((value) => value + 1)
+  const activating = useRef(new Map<string, Promise<void>>())
 
   const syncNow = async () => {
     const current = userRef.current
@@ -169,6 +181,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const activate = (account: Account) => {
+    const previous = activating.current.get(account.id) ?? Promise.resolve()
+    const run = previous.catch(() => undefined).then(async () => {
+      setUser(account)
+      userRef.current = account
+      if (supabase) await syncNow()
+      const seeded = await seedCaroKann(account.id).catch(() => false)
+      if (seeded && supabase) await syncNow()
+      else if (seeded) bump()
+    })
+    activating.current.set(account.id, run)
+    return run
+  }
+
   useEffect(() => {
     let ignore = false
     const restore = async () => {
@@ -176,29 +202,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const { data } = await supabase.auth.getSession()
         const session = data.session
         if (!ignore && session?.user) {
-          const account = { id: session.user.id, email: session.user.email ?? '' }
-          await seedCaroKann(account.id).catch(() => false)
-          setUser(account)
-          userRef.current = account
-          await syncNow()
+          await activate({ id: session.user.id, email: session.user.email ?? '' })
         }
       } else {
         const saved = await getMeta<Account & { mode: 'local' }>('session')
-        if (!ignore && saved?.mode === 'local') {
-          await seedCaroKann(saved.id).catch(() => false)
-          setUser({ id: saved.id, email: saved.email })
-        }
+        if (!ignore && saved?.mode === 'local') await activate({ id: saved.id, email: saved.email })
       }
       if (!ignore) setReady(true)
     }
     void restore()
     const subscription = supabase?.auth.onAuthStateChange((_event, session) => {
       if (!session?.user) return
-      const account = { id: session.user.id, email: session.user.email ?? '' }
-      void seedCaroKann(account.id).finally(() => {
-        setUser(account)
-        userRef.current = account
-      })
+      void activate({ id: session.user.id, email: session.user.email ?? '' })
     })
     const onOnline = () => {
       setOnline(true)
@@ -243,10 +258,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (error || !data.user) throw new DataError(friendlyAuth(error ?? { message: 'Could not sign in.' }))
           const account = { id: data.user.id, email: data.user.email ?? address }
           await adoptLocalRows(address, account.id)
-          await seedCaroKann(account.id)
-          setUser(account)
-          userRef.current = account
-          await syncNow()
+          await activate(account)
           return
         }
         const users = await allRows<LocalUser>('users')
@@ -256,9 +268,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         const account = { id: found.id, email: found.email }
         await setMeta('session', { ...account, mode: 'local' })
-        await seedCaroKann(account.id)
-        setUser(account)
-        userRef.current = account
+        await activate(account)
         setStatus('device')
       },
       async signUp(email, password) {
@@ -273,10 +283,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
           const account = { id: data.user.id, email: data.user.email ?? address }
           await adoptLocalRows(address, account.id)
-          await seedCaroKann(account.id)
-          setUser(account)
-          userRef.current = account
-          await syncNow()
+          await activate(account)
           return
         }
         const users = await allRows<LocalUser>('users')
@@ -294,9 +301,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         await putRow('users', accountUser)
         const account = { id: accountUser.id, email: address }
         await setMeta('session', { ...account, mode: 'local' })
-        await seedCaroKann(account.id)
-        setUser(account)
-        userRef.current = account
+        await activate(account)
         setStatus('device')
       },
       async signOut() {
@@ -428,6 +433,87 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const line = (await allRows<LineRecord>('lines')).find((row) => row.id === id && row.userId === current.id)
         if (!line) return
         await tombstone('lines', id, current.id)
+        bump()
+        void syncNow()
+      },
+      async commitLines(openingId, changes) {
+        const current = requireUser()
+        const opening = await getRow<OpeningRecord>('openings', openingId)
+        if (!opening || opening.userId !== current.id) throw new DataError('That opening is not on this device.')
+        const lines = (await allRows<LineRecord>('lines')).filter(
+          (row) => row.userId === current.id && row.openingId === openingId,
+        )
+        const byId = new Map(lines.map((line) => [line.id, line]))
+        const stamp = now()
+        let order = lines.reduce((max, line) => Math.max(max, line.sortOrder), 0)
+        const writes: LocalWrite[] = []
+        const removed = new Set(changes.deleteIds ?? [])
+        for (const id of removed) {
+          if (!byId.has(id)) throw new DataError('That line is no longer in this opening.')
+          writes.push({ store: 'lines', type: 'delete', id })
+          writes.push({
+            store: 'tombstones',
+            type: 'put',
+            value: { id: `lines:${id}`, table: 'lines', rowId: id, userId: current.id } satisfies Tombstone,
+          })
+        }
+        const patches = new Map<string, NonNullable<typeof changes.update>[number]>()
+        for (const patch of changes.update ?? []) {
+          if (removed.has(patch.id)) continue
+          patches.set(patch.id, { ...patches.get(patch.id), ...patch, id: patch.id })
+        }
+        for (const patch of patches.values()) {
+          const line = byId.get(patch.id)
+          if (!line) throw new DataError('That line is no longer in this opening.')
+          const next: LineRecord = {
+            ...line,
+            ...patch,
+            id: line.id,
+            userId: line.userId,
+            openingId: line.openingId,
+            updatedAt: stamp,
+            dirty: true,
+          }
+          writes.push({ store: 'lines', type: 'put', value: next })
+        }
+        for (const created of changes.create ?? []) {
+          order += 1
+          const row: LineRecord = {
+            id: crypto.randomUUID(),
+            userId: current.id,
+            openingId,
+            groupName: created.groupName,
+            name: created.name,
+            pgn: created.pgn,
+            included: created.included,
+            sortOrder: order,
+            createdAt: stamp,
+            updatedAt: stamp,
+            dirty: true,
+          }
+          writes.push({ store: 'lines', type: 'put', value: row })
+        }
+        if (changes.prefs) {
+          const prefs: BranchPrefsRecord = {
+            id: `${current.id}:${openingId}`,
+            userId: current.id,
+            openingId,
+            prefs: changes.prefs,
+            updatedAt: stamp,
+            dirty: true,
+          }
+          writes.push({ store: 'branchPrefs', type: 'put', value: prefs })
+        }
+        writes.push({
+          store: 'openings',
+          type: 'put',
+          value: { ...opening, updatedAt: stamp, dirty: true } satisfies OpeningRecord,
+        })
+        try {
+          await applyLocalChanges(writes)
+        } catch {
+          throw new DataError('Could not save these lines.')
+        }
         bump()
         void syncNow()
       },

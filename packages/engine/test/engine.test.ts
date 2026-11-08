@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addRepertoireMove,
+  allPaths,
   answer,
   applySan,
   caroKannLines,
@@ -18,17 +19,22 @@ import {
   findMove,
   firstPath,
   importPgn,
+  learningImpact,
   lichessStudyId,
   mainPathFrom,
+  nearestPath,
   newEditor,
   next,
   pathNotation,
   pathPrefix,
+  planAdditions,
+  planBranchRemoval,
   playSan,
   positionKey,
   readableRows,
   repertoireOf,
   resetDraftIds,
+  retainedSeedIds,
   rewindForOpponentTry,
   sessionView,
   showMove,
@@ -36,6 +42,7 @@ import {
   START_FEN,
   studyView,
   undoEditor,
+  variationLines,
   withPreferredMove,
 } from '../src/index'
 
@@ -103,7 +110,26 @@ describe('PGN import', () => {
 
   it('rejects a link pasted into the PGN box', () => {
     const { error } = importPgn('https://lichess.org/study/abcdefgh', 'black')
-    expect(error).toMatch(/Lichess/)
+    expect(error).toMatch(/Paste the PGN/i)
+  })
+
+  it('keeps earlier games when a later game is illegal', () => {
+    resetDraftIds()
+    const { drafts, error, warnings } = importPgn(
+      '1. e4 e5 2. Nf3 Nc6 3. d4 {Scotch} (3. Bb5 {Spanish} a6) exd4 *\n\n1. e4 e5 2. Nf3 Nc6 3. Ke3 *',
+      'white',
+    )
+    expect(error).toBeUndefined()
+    expect(drafts.map((line) => line.name).sort()).toEqual(['Scotch', 'Spanish'])
+    expect(warnings?.join(' ')).toMatch(/Ke3/)
+    expect(readableRows(drafts.find((line) => line.name === 'Scotch')!.pgn, 'white').some((row) => row.comment === 'Scotch')).toBe(true)
+  })
+
+  it('reports an illegal variation without dropping the valid line', () => {
+    const { drafts, error, warnings } = importPgn('1. e4 c6 2. d4 d5 3. Nc3 dxe4 (3. e5 e4) *', 'black')
+    expect(error).toBeUndefined()
+    expect(drafts).toHaveLength(1)
+    expect(warnings?.join(' ')).toMatch(/e4/)
   })
 
   it('reads a lichess study id from a url', () => {
@@ -397,6 +423,139 @@ describe('Caro-Kann repertoire', () => {
     expect(result.deleteIds).toEqual(['short'])
     expect(result.laterIds).toEqual(['sharp'])
     expect(result.deleteIds).not.toContain('kept')
+  })
+
+  it('leaves an existing Caro-Kann line alone after it was renamed, extended, or deleted', () => {
+    const catalog = ['repertoire:caro:classical', 'repertoire:caro:exchange']
+    expect(retainedSeedIds(catalog, ['repertoire:caro:classical'], [], true, false)).toEqual([])
+    expect(retainedSeedIds(catalog, [], ['repertoire:caro:classical'], false, false)).toEqual(['repertoire:caro:exchange'])
+    expect(retainedSeedIds(catalog, ['repertoire:caro:classical'], ['repertoire:caro:exchange'], true, true)).toEqual([])
+    expect(retainedSeedIds(catalog, [], [], false, false)).toEqual(catalog)
+  })
+})
+
+describe('repertoire changes', () => {
+  const classical = {
+    id: 'classical',
+    name: 'Classical',
+    groupName: 'Classical',
+    pgn: '1. e4 c6 2. d4 d5 3. Nc3 dxe4 *',
+    included: true,
+  }
+  const exchange = {
+    id: 'exchange',
+    name: 'Exchange',
+    groupName: 'Exchange',
+    pgn: '1. e4 c6 2. d4 d5 3. exd5 cxd5 *',
+    included: true,
+  }
+
+  it('extends from the original start and reports an exact duplicate', () => {
+    const longer = {
+      id: 'draft-1',
+      name: 'Ng3',
+      groupName: 'Lines',
+      pgn: '1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Bf5 5. Ng3 *',
+      included: false,
+      yourChoice: false,
+    }
+    const same = { ...longer, id: 'draft-2', pgn: classical.pgn }
+    const mid = {
+      ...longer,
+      id: 'draft-3',
+      pgn: '[SetUp "1"]\n[FEN "rnbqkbnr/pp2pppp/2p5/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR b KQkq - 1 3"]\n\n3... dxe4 *\n',
+    }
+    const plan = planAdditions([classical, exchange], [longer, same, mid])
+    const extend = plan.find((item) => item.kind === 'extend')
+    if (!extend) throw new Error('missing extension')
+    expect(extend.existingId).toBe('classical')
+    expect(extend.pgn).not.toContain('[FEN')
+    expect(firstPath(extend.pgn)?.moves.map((move) => move.san)).toEqual(['e4', 'c6', 'd4', 'd5', 'Nc3', 'dxe4', 'Nxe4', 'Bf5', 'Ng3'])
+    expect(plan.filter((item) => item.kind === 'duplicate')).toHaveLength(1)
+    expect(plan.find((item) => item.kind === 'rejected')?.reason).toMatch(/different position/)
+  })
+
+  it('does not let record order choose between your own replies', () => {
+    const dxe4 = { ...classical, id: 'dxe4', name: 'Classical', pgn: '1. e4 c6 2. d4 d5 3. Nc3 dxe4 *' }
+    const nf6 = { ...classical, id: 'nf6', name: 'Two Knights', pgn: '1. e4 c6 2. d4 d5 3. Nc3 Nf6 *', included: false }
+    const shared = { ...classical, id: 'shared', name: 'Also classical', pgn: '1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 *' }
+    const turnedOn = [dxe4, shared, { ...nf6, included: true }]
+    const forward = learningImpact(turnedOn, ['nf6'], 'black')
+    const reverse = learningImpact([...turnedOn].reverse(), ['nf6'], 'black')
+    expect(forward.demoted.map((line) => line.id).sort()).toEqual(['dxe4', 'shared'])
+    expect(reverse.demoted.map((line) => line.id).sort()).toEqual(['dxe4', 'shared'])
+    const both = learningImpact(
+      [
+        { ...dxe4, included: true },
+        { ...nf6, included: true },
+      ],
+      ['dxe4', 'nf6'],
+      'black',
+    )
+    expect(both.demoted).toEqual([])
+    expect(both.conflicts[0]?.choices.map((choice) => choice.san).sort()).toEqual(['Nf6', 'dxe4'])
+    const swapped = learningImpact(
+      [
+        { ...nf6, included: true },
+        { ...dxe4, included: true },
+      ],
+      ['nf6', 'dxe4'],
+      'black',
+    )
+    expect(swapped.conflicts[0]?.choices.map((choice) => choice.san).sort()).toEqual(['Nf6', 'dxe4'])
+  })
+
+  it('catches the same position reached by a different move order', () => {
+    const queen = {
+      id: 'queen',
+      name: 'Queen pawn',
+      groupName: 'Lines',
+      pgn: '1. d4 d5 2. c4 e6 *',
+      included: true,
+    }
+    const english = {
+      id: 'english',
+      name: 'English',
+      groupName: 'Lines',
+      pgn: '1. c4 d5 2. d4 c6 *',
+      included: true,
+    }
+    const impact = learningImpact([queen, english], ['queen'], 'black')
+    expect(impact.demoted.map((line) => line.id)).toEqual(['english'])
+  })
+
+  it('shows when deleting one variation also edits another branch in the same PGN', () => {
+    const combined = {
+      id: 'both',
+      name: 'Caro notes',
+      groupName: 'Lines',
+      pgn: '1. e4 c6 2. d4 d5 3. Nc3 (3. exd5 cxd5) dxe4 *',
+      included: true,
+    }
+    const plan = planBranchRemoval([combined, exchange], ['e4', 'c6', 'd4', 'd5', 'Nc3'], { 'e4|c6|d4|d5': 'Nc3' }, '3. Nc3')
+    expect(plan.deleted.map((line) => line.name)).toEqual([])
+    expect(plan.shortened.map((line) => line.name)).toEqual(['Caro notes'])
+    expect(plan.shortened[0]?.kept).toBe('exd5')
+    expect(plan.deleted).not.toContainEqual(expect.objectContaining({ id: 'exchange' }))
+    expect(allPaths(plan.updates[0]?.pgn ?? '').map((path) => path.moves.map((move) => move.san))).toEqual([
+      ['e4', 'c6', 'd4', 'd5', 'exd5', 'cxd5'],
+    ])
+    expect(plan.prefs['e4|c6|d4|d5']).toBeUndefined()
+    const tree = repertoireOf([exchange], 'black')
+    expect(nearestPath(tree, ['e4', 'c6', 'd4', 'd5', 'Nc3'])).toEqual(['e4', 'c6', 'd4', 'd5'])
+  })
+
+  it('keeps every variation of a saved line available to practice', () => {
+    const line = {
+      id: 'both',
+      name: 'Caro notes',
+      groupName: 'Lines',
+      pgn: '1. e4 c6 2. d4 d5 3. Nc3 (3. exd5 cxd5) dxe4 *',
+    }
+    const variations = variationLines(line)
+    expect(variations).toHaveLength(2)
+    expect(variations.every((item) => item.id === 'both')).toBe(true)
+    expect(variations.map((item) => firstPath(item.pgn)?.moves.at(-1)?.san).sort()).toEqual(['cxd5', 'dxe4'])
   })
 })
 

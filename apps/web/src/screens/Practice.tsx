@@ -9,6 +9,7 @@ import {
   next,
   sessionView,
   showMove,
+  variationLines,
   type Session,
   type SessionEvent,
 } from '@opening/engine'
@@ -50,7 +51,9 @@ export function Practice({ id, lineId }: { id: string; lineId?: string }) {
       }
       const stored = await api.listLines(id)
       const progress = await api.listProgress(id)
-      const selected = lineId ? stored.filter((line) => line.id === lineId) : stored.filter((line) => line.included)
+      const selected = lineId
+        ? stored.filter((line) => line.id === lineId).flatMap((line) => variationLines(line))
+        : stored.filter((line) => line.included)
       if (cancel) return
       setOpening(found)
       setLines(selected)

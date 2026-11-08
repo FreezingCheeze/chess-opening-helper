@@ -82,6 +82,11 @@ export function commentOnLast(state: EditorState, comment: string): EditorState 
   return { ...state, tree }
 }
 
+export function retreatEditor(state: EditorState): EditorState {
+  if (state.path.length === 0) return state
+  return { ...state, path: state.path.slice(0, -1) }
+}
+
 export function followChoice(state: EditorState, san: string): EditorState {
   const choices = editorChoices(state)
   const match = choices.find((move) => move.san === san)
@@ -141,4 +146,32 @@ export function editorDrafts(state: EditorState, baseName: string, groupName: st
     }
   })
   return keepOneUserReply(drafts, state.myColor)
+}
+
+function shortName(value: string): string {
+  const clean = value.replace(/\s+/g, ' ').trim()
+  return clean.length > 48 ? `${clean.slice(0, 45).trim()}…` : clean
+}
+
+/** Draft lines for moves added after a fixed lead-in. Nothing is turned on yet. */
+export function editorLines(state: EditorState, anchor: number, baseName: string, groupName: string): DraftLine[] {
+  const paths: Step[][] = []
+  walk(state, state.startFen, [], paths)
+  const extended = paths.filter((path) => path.length > anchor)
+  const group = groupName.trim() || 'Lines'
+  const fallback = baseName.trim() || 'Line'
+  return extended.map((path, index) => {
+    const several = extended.length > 1
+    const branched = divergenceLabel(path, extended.filter((other) => other !== path))
+    const added = path[Math.min(anchor, path.length - 1)]
+    const single = added?.comment || added?.san || fallback
+    return {
+      id: `editor-${index + 1}`,
+      name: shortName(several ? branched : single),
+      groupName: group,
+      pgn: toPgn(state.startFen, path),
+      included: false,
+      yourChoice: false,
+    }
+  })
 }

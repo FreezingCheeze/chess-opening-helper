@@ -23,7 +23,7 @@ export {
   positionKey,
   sideToMove,
 } from './chess'
-export { allPaths, firstPath, importPgn, isGenericGroup, lichessStudyId, readableRows, resetDraftIds, toPgn } from './pgn'
+export { allPaths, firstPath, importPgn, isGenericGroup, lichessStudyId, readableRows, resetDraftIds, toPgn, variationLines } from './pgn'
 export { chooseLearning, compile, keepOneUserReply, reconcileLearning } from './compile'
 export {
   answer,
@@ -42,10 +42,12 @@ export {
   commentOnLast,
   editorChoices,
   editorDrafts,
+  editorLines,
   followChoice,
   newEditor,
   placeOf,
   playSan,
+  retreatEditor,
   rewindForOpponentTry,
   undoEditor,
 } from './editor'
@@ -57,6 +59,7 @@ export {
   branchParentKey,
   findMove,
   mainPathFrom,
+  nearestPath,
   nodeTitleKey,
   nodeTitlesFrom,
   pathNotation,
@@ -65,5 +68,7 @@ export {
   withPreferredMove,
 } from './tree'
 export type { BranchPrefs, LinePatch, Repertoire, StoredLine, TreeMove } from './tree'
-export { caroKannLines, pgnForMoves, repertoireAdjustments } from './caro'
+export { caroKannLines, pgnForMoves, repertoireAdjustments, retainedSeedIds } from './caro'
+export { learningImpact, planAdditions, planBranchRemoval, prunePrefs } from './repertoire'
+export type { AdditionItem, BranchRemoval, LearningImpact } from './repertoire'
 export type { CaroLine } from './caro'

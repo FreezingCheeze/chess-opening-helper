@@ -145,10 +145,14 @@ export function repertoireOf(lines: StoredLine[], _myColor: Color, prefs: Branch
         children: applied ? build(path, nextFen) : [],
       }
     })
-    return nodes.sort((left, right) => {
+    const sorted = nodes.sort((left, right) => {
       const rank = (node: TreeMove) => (node.preferred ? 0 : node.learningCount === 0 ? 2 : 1)
       return rank(left) - rank(right)
     })
+    if (sorted.length > 1 && !sorted.some((node) => node.preferred) && sorted[0]) {
+      sorted[0] = { ...sorted[0], preferred: true }
+    }
+    return sorted
   }
 
   return { fen: startFen, moves: build([], startFen) }
@@ -179,6 +183,19 @@ export function mainPathFrom(tree: Repertoire, prefix: string[] = []): string[] 
 
 export function pathPrefix(path: string[], full: string[]): boolean {
   return path.length <= full.length && path.every((san, index) => full[index] === san)
+}
+
+/** Longest prefix of `path` that is still in the tree. */
+export function nearestPath(tree: Repertoire, path: string[]): string[] {
+  const next: string[] = []
+  let nodes = tree.moves
+  for (const san of path) {
+    const found = nodes.find((move) => move.san === san)
+    if (!found) break
+    next.push(san)
+    nodes = found.children
+  }
+  return next
 }
 
 export function pathNotation(startFen: string, path: string[]): string {
